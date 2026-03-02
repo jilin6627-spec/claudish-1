@@ -399,6 +399,7 @@ async function runCli() {
       modelMap,
       {
         summarizeTools: cliConfig.summarizeTools,
+        quiet: cliConfig.quiet,
       }
     );
 

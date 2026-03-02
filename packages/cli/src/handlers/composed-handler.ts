@@ -30,7 +30,7 @@ import { createResponsesStreamHandler } from "./shared/stream-parsers/openai-res
 import { createAnthropicPassthroughStream } from "./shared/stream-parsers/anthropic-sse.js";
 import { createOllamaJsonlStream } from "./shared/stream-parsers/ollama-jsonl.js";
 import { createGeminiSseStream } from "./shared/stream-parsers/gemini-sse.js";
-import { log, logStructured, getLogLevel, truncateContent } from "../logger.js";
+import { log, logStderr, logStructured, getLogLevel, truncateContent } from "../logger.js";
 import { describeImages, type OpenAIImageBlock, type VisionProxyAuthHeaders } from "../services/vision-proxy.js";
 
 function extractAuthHeaders(c: Context): VisionProxyAuthHeaders {
@@ -204,6 +204,7 @@ export class ComposedHandler implements ModelHandler {
         await this.provider.refreshAuth();
       } catch (err: any) {
         log(`[${this.provider.displayName}] Auth/health check failed: ${err.message}`);
+        logStderr(`Error [${this.provider.displayName}]: Auth/health check failed — ${err.message}. Check credentials and server.`);
         return c.json(
           { error: { type: "connection_error", message: err.message } },
           503 as any
@@ -254,6 +255,7 @@ export class ComposedHandler implements ModelHandler {
       if (error.code === "ECONNREFUSED" || error.cause?.code === "ECONNREFUSED") {
         const msg = `Cannot connect to ${this.provider.displayName} at ${endpoint}. Make sure the server is running.`;
         log(`[${this.provider.displayName}] ${msg}`);
+        logStderr(`Error: ${msg} Check the server is running.`);
         return c.json({ error: { type: "connection_error", message: msg } }, 503 as any);
       }
       throw error;
@@ -280,10 +282,12 @@ export class ComposedHandler implements ModelHandler {
           } else {
             const errorText = await retryResp.text();
             log(`[${this.provider.displayName}] Retry failed: ${errorText}`);
+            logStderr(`Error [${this.provider.displayName}]: HTTP ${retryResp.status} after auth retry. Check API key.`);
             return c.json({ error: errorText }, retryResp.status as any);
           }
         } catch (err: any) {
           log(`[${this.provider.displayName}] Auth refresh failed: ${err.message}`);
+          logStderr(`Error [${this.provider.displayName}]: Authentication failed — ${err.message}. Check API key.`);
           return c.json(
             { error: { type: "authentication_error", message: err.message } },
             401 as any
@@ -292,6 +296,8 @@ export class ComposedHandler implements ModelHandler {
       } else {
         const errorText = await response.text();
         log(`[${this.provider.displayName}] Error: ${errorText}`);
+        const hint = getRecoveryHint(response.status, errorText, this.provider.displayName);
+        logStderr(`Error [${this.provider.displayName}]: HTTP ${response.status}. ${hint}`);
         return c.json({ error: errorText }, response.status as any);
       }
     }
@@ -395,4 +401,37 @@ export class ComposedHandler implements ModelHandler {
       await this.provider.shutdown();
     }
   }
+}
+
+/**
+ * Return a human-readable recovery hint based on HTTP status and error body.
+ */
+function getRecoveryHint(status: number, errorText: string, providerName: string): string {
+  const lower = errorText.toLowerCase();
+
+  if (status === 503 || lower.includes("overloaded")) {
+    return "Provider overloaded. Retry or use a different model.";
+  }
+  if (status === 429 || lower.includes("rate limit")) {
+    return "Rate limited. Wait, reduce concurrency, or check plan limits.";
+  }
+  if (status === 401 || status === 403) {
+    return "Check API key / OAuth credentials.";
+  }
+  if (status === 404) {
+    return "Verify model name is correct.";
+  }
+  if (status === 400) {
+    if (lower.includes("unsupported content type") || lower.includes("unsupported_content_type")) {
+      return "Model doesn't support this content format. Try a different model.";
+    }
+    if (lower.includes("context") || lower.includes("too long") || lower.includes("token")) {
+      return "Input too large. Reduce message history or use a larger-context model.";
+    }
+    return "Request format may be incompatible with provider.";
+  }
+  if (status >= 500) {
+    return "Server error — retry after a brief wait.";
+  }
+  return `Unexpected HTTP ${status} from ${providerName}.`;
 }

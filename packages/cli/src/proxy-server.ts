@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
-import { log, isLoggingEnabled } from "./logger.js";
+import { log, logStderr, isLoggingEnabled } from "./logger.js";
 import type { ProxyServer } from "./types.js";
 import { NativeHandler } from "./handlers/native-handler.js";
 import { OpenRouterProvider } from "./providers/transport/openrouter.js";
@@ -42,6 +42,7 @@ import { fetchLiteLLMModels } from "./model-loader.js";
 
 export interface ProxyServerOptions {
   summarizeTools?: boolean; // Summarize tool descriptions for local models
+  quiet?: boolean; // Suppress informational stderr output (e.g., [Auto-route])
 }
 
 export async function createProxyServer(
@@ -166,7 +167,10 @@ export async function createProxyServer(
     const resolution = resolveModelProvider(targetModel);
 
     if (resolution.wasAutoRouted && resolution.autoRouteMessage) {
-      console.error(`[Auto-route] ${resolution.autoRouteMessage}`);
+      if (!options.quiet) {
+        console.error(`[Auto-route] ${resolution.autoRouteMessage}`);
+      }
+      log(`[Auto-route] ${resolution.autoRouteMessage}`);
     }
 
     // If resolver says use OpenRouter (including fallback cases), create the handler
@@ -279,9 +283,9 @@ export async function createProxyServer(
       } else if (resolved.provider.name === "litellm") {
         // LiteLLM uses OpenAI-compatible API format — composed handler
         if (!resolved.provider.baseUrl) {
-          console.error("Error: LITELLM_BASE_URL or --litellm-url is required for LiteLLM provider.");
-          console.error("Set it with: export LITELLM_BASE_URL='https://your-litellm-instance.com'");
-          console.error("Or use: claudish --litellm-url https://your-instance.com --model litellm@model 'task'");
+          logStderr("Error: LITELLM_BASE_URL or --litellm-url is required for LiteLLM provider.");
+          logStderr("Set it with: export LITELLM_BASE_URL='https://your-litellm-instance.com'");
+          logStderr("Or use: claudish --litellm-url https://your-instance.com --model litellm@model 'task'");
           return null;
         }
         const provider = new LiteLLMProvider(resolved.provider.baseUrl, apiKey, resolved.modelName);

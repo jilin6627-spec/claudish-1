@@ -116,6 +116,15 @@ export function log(message: string, forceConsole = false): void {
 }
 
 /**
+ * Log a message to stderr (always visible) and to the debug log file.
+ * Use for errors and warnings that programmatic callers need to detect.
+ */
+export function logStderr(message: string): void {
+  process.stderr.write(`[claudish] ${message}\n`);
+  log(message); // also write to debug log
+}
+
+/**
  * Get the current log file path
  */
 export function getLogFilePath(): string | null {
