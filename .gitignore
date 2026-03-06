@@ -69,3 +69,6 @@ jetski_service.txt
 service_offset.txt
 tokens.json
 test-results/
+
+# Smoke test results
+packages/cli/results/*.json

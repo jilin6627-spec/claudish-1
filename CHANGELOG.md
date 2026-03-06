@@ -1,5 +1,22 @@
 # Changelog
 
+## [5.8.0] - 2026-03-06
+
+### Added
+- ✅ **Smoke test suite** (`bun run smoke`) — periodic validation that all available providers work correctly
+  - Auto-discovers providers from environment API keys (supports 10+ providers)
+  - Runs 3 probes per provider: `tool_calling`, `reasoning`, `vision`
+  - Makes direct non-streaming HTTP calls (no proxy server dependency)
+  - Outputs colored terminal table (PASS/FAIL/SKIP) + JSON results file (`packages/cli/results/`)
+  - CLI flags: `--provider NAME`, `--quiet`, `--json-only`, `--dry-run`, `--timeout MS`
+  - GitHub Actions workflow (`.github/workflows/smoke-test.yml`) for scheduled + manual runs
+  - Uses `Promise.allSettled` at both provider and probe level — one failure never blocks others
+
+### Fixed
+- 🐛 **Smoke test image rejection** — test vision image upgraded from 1×1 PNG to 32×32 PNG; the 1×1 image was rejected by Gemini and Kimi as "invalid or unsupported image format"
+- 🐛 **`isReasoningModel` regex** — unanchored `r1` matched substrings like `gr1d`, `dr12`. Fixed with word boundary `\br1\b`
+- 🐛 **Vision false-fail on "unsupported"** — removed overly broad `"unsupported"` phrase from VISION_ERROR_PHRASES; now uses more specific phrases like `"does not support image"` and `"image type not supported"`
+
 ## [5.7.1] - 2026-03-06
 
 ### Fixed

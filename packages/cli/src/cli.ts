@@ -1,7 +1,15 @@
 import { ENV } from "./config.js";
 import type { ClaudishConfig } from "./types.js";
 import { loadModelInfo, getAvailableModels, fetchLiteLLMModels } from "./model-loader.js";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, readdirSync, unlinkSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  copyFileSync,
+  readdirSync,
+  unlinkSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -24,7 +32,7 @@ export {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-let VERSION = "5.7.1"; // Fallback version for compiled binaries
+let VERSION = "5.8.0"; // Fallback version for compiled binaries
 try {
   const packageJson = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf-8"));
   VERSION = packageJson.version;
@@ -241,7 +249,12 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
         printAvailableModels();
       }
       process.exit(0);
-    } else if (arg === "--models" || arg === "--list-models" || arg === "-s" || arg === "--search") {
+    } else if (
+      arg === "--models" ||
+      arg === "--list-models" ||
+      arg === "-s" ||
+      arg === "--search"
+    ) {
       // Check for optional search query (next arg that doesn't start with --)
       const nextArg = args[i + 1];
       const hasQuery = nextArg && !nextArg.startsWith("--");
@@ -873,9 +886,7 @@ async function printAllModels(jsonOutput: boolean, forceUpdate: boolean): Promis
         forceUpdate
       );
       if (litellmModels.length > 0) {
-        console.log(
-          `\n🔗 LITELLM PROXY (${litellmModels.length} model groups):\n`
-        );
+        console.log(`\n🔗 LITELLM PROXY (${litellmModels.length} model groups):\n`);
         console.log("    Model                          Context    Pricing      Tools");
         console.log("  " + "─".repeat(68));
 
@@ -885,7 +896,7 @@ async function printAllModels(jsonOutput: boolean, forceUpdate: boolean): Promis
           const contextPadded = (model.context || "N/A").padEnd(10);
           const pricingStr = model.isFree
             ? `${GREEN}FREE${RESET}`
-            : (model.pricing?.average || "N/A");
+            : model.pricing?.average || "N/A";
           const pricingPadded = model.isFree ? "FREE        " : pricingStr.padEnd(12);
           const tools = model.supportsTools ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`;
 
@@ -1665,9 +1676,7 @@ function printAvailableModels(): void {
     const vision = model.supportsVision ? "👁️ " : "  ";
     const capabilities = `${tools} ${reasoning} ${vision}`;
 
-    console.log(
-      `  ${modelIdPadded} ${pricingPadded} ${contextPadded} ${capabilities}`
-    );
+    console.log(`  ${modelIdPadded} ${pricingPadded} ${contextPadded} ${capabilities}`);
   }
 
   console.log("");

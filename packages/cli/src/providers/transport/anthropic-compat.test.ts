@@ -91,7 +91,10 @@ describe("AnthropicPassthroughAdapter — tool_reference stripping", () => {
   it("strips tool_reference blocks from tool_result content", () => {
     const request = {
       messages: [
-        { role: "assistant", content: [{ type: "tool_use", id: "ts_0", name: "ToolSearch", input: {} }] },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "ts_0", name: "ToolSearch", input: {} }],
+        },
         {
           role: "user",
           content: [
