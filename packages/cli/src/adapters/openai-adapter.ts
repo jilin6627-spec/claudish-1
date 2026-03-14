@@ -56,11 +56,7 @@ export class OpenAIAdapter extends BaseModelAdapter {
   }
 
   shouldHandle(modelId: string): boolean {
-    return (
-      modelId.startsWith("oai/") ||
-      modelId.includes("o1") ||
-      modelId.includes("o3")
-    );
+    return modelId.startsWith("oai/") || modelId.includes("o1") || modelId.includes("o3");
   }
 
   getName(): string {
@@ -73,8 +69,7 @@ export class OpenAIAdapter extends BaseModelAdapter {
     const model = this.modelId.toLowerCase();
 
     // xAI Grok models
-    if (model.includes("grok-4.1-fast") || model.includes("grok-4-1-fast"))
-      return 2_000_000;
+    if (model.includes("grok-4.1-fast") || model.includes("grok-4-1-fast")) return 2_000_000;
     if (model.includes("grok-4-fast")) return 2_000_000;
     if (model.includes("grok-code-fast")) return 256_000;
     if (model.includes("grok-4")) return 256_000;
@@ -185,7 +180,9 @@ export class OpenAIAdapter extends BaseModelAdapter {
       else if (budget_tokens < 16000) effort = "low";
       else if (budget_tokens >= 32000) effort = "high";
       payload.reasoning_effort = effort;
-      log(`[OpenAIAdapter] Mapped thinking.budget_tokens ${budget_tokens} -> reasoning_effort: ${effort}`);
+      log(
+        `[OpenAIAdapter] Mapped thinking.budget_tokens ${budget_tokens} -> reasoning_effort: ${effort}`
+      );
     }
 
     return payload;
@@ -277,10 +274,12 @@ export class OpenAIAdapter extends BaseModelAdapter {
         result.push({
           type: "message",
           role: msg.role,
-          content: [{
-            type: msg.role === "user" ? "input_text" : "output_text",
-            text: msg.content,
-          }],
+          content: [
+            {
+              type: msg.role === "user" ? "input_text" : "output_text",
+              text: msg.content,
+            },
+          ],
         });
         continue;
       }

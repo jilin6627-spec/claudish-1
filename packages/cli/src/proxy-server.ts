@@ -44,6 +44,9 @@ import {
   logResolution,
   warmAllCatalogs,
 } from "./providers/model-catalog-resolver.js";
+import { FallbackHandler } from "./handlers/fallback-handler.js";
+import type { FallbackCandidate } from "./handlers/fallback-handler.js";
+import { getFallbackChain } from "./providers/auto-route.js";
 
 export interface ProxyServerOptions {
   summarizeTools?: boolean; // Summarize tool descriptions for local models
@@ -81,7 +84,10 @@ export async function createProxyServer(
       const orAdapter = new OpenRouterAdapter(modelId);
       openRouterHandlers.set(
         modelId,
-        new ComposedHandler(orProvider, modelId, modelId, port, { adapter: orAdapter, isInteractive: options.isInteractive })
+        new ComposedHandler(orProvider, modelId, modelId, port, {
+          adapter: orAdapter,
+          isInteractive: options.isInteractive,
+        })
       );
     }
     return openRouterHandlers.get(modelId)!;
@@ -100,7 +106,9 @@ export async function createProxyServer(
       const poeTransport = new PoeProvider(poeApiKey);
       poeHandlers.set(
         modelId,
-        new ComposedHandler(poeTransport, modelId, modelId, port, { isInteractive: options.isInteractive })
+        new ComposedHandler(poeTransport, modelId, modelId, port, {
+          isInteractive: options.isInteractive,
+        })
       );
     }
     return poeHandlers.get(modelId)!;
@@ -151,12 +159,18 @@ export async function createProxyServer(
         providerConfig.name,
         providerConfig.capabilities
       );
-      const handler = new ComposedHandler(provider, urlParsed.modelName, urlParsed.modelName, port, {
-        adapter,
-        tokenStrategy: "local",
-        summarizeTools: options.summarizeTools,
-        isInteractive: options.isInteractive,
-      });
+      const handler = new ComposedHandler(
+        provider,
+        urlParsed.modelName,
+        urlParsed.modelName,
+        port,
+        {
+          adapter,
+          tokenStrategy: "local",
+          summarizeTools: options.summarizeTools,
+          isInteractive: options.isInteractive,
+        }
+      );
       localProviderHandlers.set(targetModel, handler);
       log(
         `[Proxy] Created URL-based local provider handler: ${urlParsed.baseUrl}/${urlParsed.modelName}`
@@ -252,7 +266,10 @@ export async function createProxyServer(
       ) {
         // MiniMax, Kimi, Kimi Coding, and Z.AI use Anthropic-compatible APIs — composed handler
         const acProvider = new AnthropicCompatProvider(resolved.provider, apiKey);
-        const acAdapter = new AnthropicPassthroughAdapter(resolved.modelName, resolved.provider.name);
+        const acAdapter = new AnthropicPassthroughAdapter(
+          resolved.modelName,
+          resolved.provider.name
+        );
         handler = new ComposedHandler(acProvider, targetModel, resolved.modelName, port, {
           adapter: acAdapter,
           isInteractive: options.isInteractive,
@@ -280,12 +297,17 @@ export async function createProxyServer(
         const isGoProvider = resolved.provider.name === "opencode-zen-go";
         if (resolved.modelName.toLowerCase().includes("minimax")) {
           const zenAcProvider = new AnthropicCompatProvider(resolved.provider, zenApiKey);
-          const zenAcAdapter = new AnthropicPassthroughAdapter(resolved.modelName, resolved.provider.name);
+          const zenAcAdapter = new AnthropicPassthroughAdapter(
+            resolved.modelName,
+            resolved.provider.name
+          );
           handler = new ComposedHandler(zenAcProvider, targetModel, resolved.modelName, port, {
             adapter: zenAcAdapter,
             isInteractive: options.isInteractive,
           });
-          log(`[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (Anthropic composed): ${resolved.modelName}`);
+          log(
+            `[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (Anthropic composed): ${resolved.modelName}`
+          );
         } else {
           const zenProvider = new OpenAIProvider(resolved.provider, resolved.modelName, zenApiKey);
           const zenAdapter = new OpenAIAdapter(resolved.modelName, resolved.provider.capabilities);
@@ -294,7 +316,9 @@ export async function createProxyServer(
             tokenStrategy: "delta-aware",
             isInteractive: options.isInteractive,
           });
-          log(`[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (composed): ${resolved.modelName}`);
+          log(
+            `[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (composed): ${resolved.modelName}`
+          );
         }
       } else if (resolved.provider.name === "ollamacloud") {
         // OllamaCloud uses Ollama native API (NOT OpenAI-compatible) — composed handler
@@ -311,7 +335,9 @@ export async function createProxyServer(
         if (!resolved.provider.baseUrl) {
           logStderr("Error: LITELLM_BASE_URL or --litellm-url is required for LiteLLM provider.");
           logStderr("Set it with: export LITELLM_BASE_URL='https://your-litellm-instance.com'");
-          logStderr("Or use: claudish --litellm-url https://your-instance.com --model litellm@model 'task'");
+          logStderr(
+            "Or use: claudish --litellm-url https://your-instance.com --model litellm@model 'task'"
+          );
           return null;
         }
         const provider = new LiteLLMProvider(resolved.provider.baseUrl, apiKey, resolved.modelName);
@@ -320,7 +346,9 @@ export async function createProxyServer(
           adapter,
           isInteractive: options.isInteractive,
         });
-        log(`[Proxy] Created LiteLLM handler (composed): ${resolved.modelName} (${resolved.provider.baseUrl})`);
+        log(
+          `[Proxy] Created LiteLLM handler (composed): ${resolved.modelName} (${resolved.provider.baseUrl})`
+        );
       } else if (resolved.provider.name === "vertex") {
         // Vertex AI supports two modes:
         // 1. Express Mode (API key) - for Gemini models
@@ -335,7 +363,11 @@ export async function createProxyServer(
           // because the vertex provider config has empty baseUrl/apiPath (designed for OAuth mode).
           const geminiConfig = getRegisteredRemoteProviders().find((p) => p.name === "gemini");
           const expressProvider = geminiConfig || resolved.provider;
-          const vxGemProvider = new GeminiApiKeyProvider(expressProvider, resolved.modelName, process.env.VERTEX_API_KEY!);
+          const vxGemProvider = new GeminiApiKeyProvider(
+            expressProvider,
+            resolved.modelName,
+            process.env.VERTEX_API_KEY!
+          );
           const vxGemAdapter = new GeminiAdapter(resolved.modelName);
           handler = new ComposedHandler(vxGemProvider, targetModel, resolved.modelName, port, {
             adapter: vxGemAdapter,
@@ -361,9 +393,10 @@ export async function createProxyServer(
             vxAdapter = new AnthropicPassthroughAdapter(parsed.model, "vertex");
           } else {
             // Mistral/Meta use OpenAI format; Mistral rawPredict uses bare model name
-            const modelId = parsed.publisher === "mistralai"
-              ? parsed.model
-              : `${parsed.publisher}/${parsed.model}`;
+            const modelId =
+              parsed.publisher === "mistralai"
+                ? parsed.model
+                : `${parsed.publisher}/${parsed.model}`;
             vxAdapter = new DefaultAdapter(modelId);
           }
 
@@ -399,15 +432,19 @@ export async function createProxyServer(
 
   // Pre-warm LiteLLM model cache for auto-routing (non-blocking)
   if (process.env.LITELLM_BASE_URL && process.env.LITELLM_API_KEY) {
-    fetchLiteLLMModels(
-      process.env.LITELLM_BASE_URL,
-      process.env.LITELLM_API_KEY
-    ).then(() => {
-      log("[Proxy] LiteLLM model cache pre-warmed for auto-routing");
-    }).catch(() => {
-      // Silently ignore - auto-routing will skip LiteLLM if cache unavailable
-    });
+    fetchLiteLLMModels(process.env.LITELLM_BASE_URL, process.env.LITELLM_API_KEY)
+      .then(() => {
+        log("[Proxy] LiteLLM model cache pre-warmed for auto-routing");
+      })
+      .catch(() => {
+        // Silently ignore - auto-routing will skip LiteLLM if cache unavailable
+      });
   }
+
+  // Cache fallback handlers by target model string.
+  // No TTL/invalidation: claudish is ephemeral per session, so env changes
+  // (new API keys) take effect on next session start.
+  const fallbackHandlerCache = new Map<string, ModelHandler>();
 
   const getHandlerForRequest = (requestedModel: string): ModelHandler => {
     // 1. Monitor Mode Override
@@ -442,6 +479,55 @@ export async function createProxyServer(
           // Reconstruct target with resolved model name so handler construction
           // uses the correct fully-qualified API ID (e.g., "qwen/qwen3-coder-next").
           target = `${parsedTarget.provider}@${resolution.resolvedId}`;
+        }
+      }
+    }
+
+    // 2c. Provider fallback chain for auto-routed models
+    // When no explicit provider@ prefix is given, build a priority chain of providers
+    // and wrap them in a FallbackHandler that tries each in order on retryable errors.
+    {
+      const parsedForFallback = parseModelSpec(target);
+      if (
+        !parsedForFallback.isExplicitProvider &&
+        parsedForFallback.provider !== "native-anthropic" &&
+        !isPoeModel(target)
+      ) {
+        const cacheKey = `fallback:${target}`;
+        if (fallbackHandlerCache.has(cacheKey)) {
+          return fallbackHandlerCache.get(cacheKey)!;
+        }
+
+        const chain = getFallbackChain(parsedForFallback.model, parsedForFallback.provider);
+        if (chain.length > 0) {
+          const candidates: FallbackCandidate[] = [];
+          for (const route of chain) {
+            let handler: ModelHandler | null = null;
+            if (route.provider === "openrouter") {
+              handler = getOpenRouterHandler(route.modelSpec);
+            } else {
+              handler = getRemoteProviderHandler(route.modelSpec);
+            }
+            if (handler) {
+              candidates.push({ name: route.displayName, handler });
+            }
+          }
+
+          if (candidates.length > 0) {
+            const resultHandler =
+              candidates.length > 1
+                ? new FallbackHandler(candidates)
+                : candidates[0].handler;
+
+            fallbackHandlerCache.set(cacheKey, resultHandler);
+
+            if (!options.quiet && candidates.length > 1) {
+              logStderr(
+                `[Fallback] ${candidates.length} providers for ${parsedForFallback.model}: ${candidates.map((c) => c.name).join(" → ")}`
+              );
+            }
+            return resultHandler;
+          }
         }
       }
     }
