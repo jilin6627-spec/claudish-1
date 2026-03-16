@@ -1,357 +1,180 @@
 import type { SelectOption } from "@opentui/core";
 /** @jsxImportSource @opentui/react */
 import { useKeyboard } from "@opentui/react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { loadConfig, saveConfig } from "../../profile-config.js";
+import { C } from "../theme.js";
 
-const C = {
-  green: "#9ece6a",
-  red: "#f7768e",
-  yellow: "#e0af68",
-  cyan: "#7dcfff",
-  dim: "#565f89",
-  text: "#c0caf5",
-  bgAlt: "#24283b",
-  focused: "#7aa2f7",
-};
-
-type Mode = "list" | "add-pattern" | "add-chain" | "confirm-remove" | "confirm-clear";
+type Mode = "list" | "action" | "add_pattern" | "add_chain";
 
 interface RoutingPanelProps {
   focused: boolean;
   height: number;
+  onEditingChange?: (editing: boolean) => void;
 }
 
-function addRule(pattern: string, chain: string): void {
-  const cfg = loadConfig();
-  if (!cfg.routing) cfg.routing = {};
-  cfg.routing[pattern] = chain
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  saveConfig(cfg);
+function pStr(s: string, len: number) {
+  return s.padEnd(len).substring(0, len);
 }
 
-function removeRule(pattern: string): void {
-  const cfg = loadConfig();
-  if (!cfg.routing) return;
-  delete cfg.routing[pattern];
-  if (Object.keys(cfg.routing).length === 0) cfg.routing = undefined;
-  saveConfig(cfg);
-}
-
-function clearAllRules(): void {
-  const cfg = loadConfig();
-  cfg.routing = undefined;
-  saveConfig(cfg);
-}
-
-export function RoutingPanel({ focused, height }: RoutingPanelProps) {
+export function RoutingPanel({ focused, height, onEditingChange }: RoutingPanelProps) {
+  const [config, setConfig] = useState(() => loadConfig());
   const [mode, setMode] = useState<Mode>("list");
+  const [itemIndex, setItemIndex] = useState(0);
   const [actionIndex, setActionIndex] = useState(0);
-  const [ruleIndex, setRuleIndex] = useState(0);
+  
   const [patternInput, setPatternInput] = useState("");
   const [chainInput, setChainInput] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  const [confirmIndex, setConfirmIndex] = useState(0);
 
-  const config = loadConfig();
+  useEffect(() => onEditingChange?.(mode !== "list"), [mode, onEditingChange]);
+
   const rules = config.routing ?? {};
   const ruleEntries = Object.entries(rules);
-  const ruleCount = ruleEntries.length;
 
-  const actionOptions: Array<{ name: string; description: string; value: string }> = [
-    { name: "Add routing rule", description: "Add pattern → provider chain", value: "add" },
-    ...(ruleCount > 0
-      ? [
-          { name: "Remove a rule", description: "Delete a specific routing rule", value: "remove" },
-          {
-            name: "Clear all rules",
-            description: `Remove all ${ruleCount} rule(s)`,
-            value: "clear",
-          },
-        ]
-      : []),
+  const listOptions = [
+    { name: " [+] Add new routing rule...", value: "__add__" },
+    ...ruleEntries.map(([pat, chain]) => ({
+      name: `  ${pStr(pat, 18)} →  ${chain.join(" | ")}`,
+      value: pat,
+    }))
   ];
 
-  const handleActionSelect = useCallback(
-    (_idx: number, opt: SelectOption | null) => {
-      if (!opt?.value) return;
-      if (opt.value === "add") {
-        setPatternInput("");
-        setChainInput("");
-        setMode("add-pattern");
-      } else if (opt.value === "remove" && ruleCount > 0) {
-        setRuleIndex(0);
-        setMode("confirm-remove");
-      } else if (opt.value === "clear" && ruleCount > 0) {
-        setConfirmIndex(0);
-        setMode("confirm-clear");
-      }
-    },
-    [ruleCount]
-  );
-
-  const handleRemoveSelect = useCallback(
-    (_idx: number, opt: SelectOption | null) => {
-      if (!opt?.value) return;
-      if (opt.value === "back") {
-        setMode("list");
-        return;
-      }
-      const idx = Number(opt.value);
-      if (!Number.isNaN(idx)) {
-        const pattern = ruleEntries[idx]?.[0];
-        if (pattern) {
-          removeRule(pattern);
-          setStatusMsg(`Rule "${pattern}" removed.`);
-        }
-        setMode("list");
-      }
-    },
-    [ruleEntries]
-  );
-
-  const handleConfirmClearSelect = useCallback((_idx: number, opt: SelectOption | null) => {
+  const handleActionSelect = useCallback((_idx: number, opt: SelectOption | null) => {
     if (!opt?.value) return;
-    if (opt.value === "yes") {
-      clearAllRules();
-      setStatusMsg("All routing rules cleared.");
+    if (opt.value === "back") {
+      setMode("list");
+    } else if (opt.value === "delete") {
+      const tgt = ruleEntries[itemIndex - 1]?.[0];
+      if (tgt) {
+        delete rules[tgt];
+        if (Object.keys(rules).length === 0) config.routing = undefined;
+        saveConfig(config);
+        setConfig(loadConfig());
+        setStatusMsg(`✓ Deleted rule for '${tgt}'`);
+      }
+      setMode("list");
+    } else if (opt.value === "clear") {
+      config.routing = undefined;
+      saveConfig(config);
+      setConfig(loadConfig());
+      setStatusMsg("✓ Cleared all custom routing rules");
+      setMode("list");
     }
-    setMode("list");
-  }, []);
-
-  const handlePatternKey = useCallback(
-    (keyName: string) => {
-      if (keyName === "return" || keyName === "enter") {
-        if (patternInput.trim()) setMode("add-chain");
-      } else if (keyName === "escape") {
-        setMode("list");
-        setStatusMsg(null);
-      }
-    },
-    [patternInput]
-  );
-
-  const handleChainKey = useCallback(
-    (keyName: string) => {
-      if (keyName === "return" || keyName === "enter") {
-        const pattern = patternInput.trim();
-        const chain = chainInput.trim();
-        if (pattern && chain) {
-          addRule(pattern, chain);
-          setStatusMsg(`Rule added: ${pattern}`);
-          setPatternInput("");
-          setChainInput("");
-          setMode("list");
-        }
-      } else if (keyName === "escape") {
-        setMode("add-pattern");
-      }
-    },
-    [patternInput, chainInput]
-  );
+  }, [itemIndex, ruleEntries, rules, config]);
 
   useKeyboard((key) => {
     if (!focused) return;
-    if (mode === "add-pattern") {
-      handlePatternKey(key.name);
-    } else if (mode === "add-chain") {
-      handleChainKey(key.name);
-    } else if (mode === "list" && (key.name === "escape" || key.name === "q")) {
-      setStatusMsg(null);
+    if (mode === "list") {
+      // Hotkeys for power users
+      if (key.name === "a") {
+         setPatternInput(""); setChainInput(""); setMode("add_pattern");
+      }
+      if ((key.name === "r" || key.name === "delete") && itemIndex > 0) {
+         setMode("action");
+      }
+    } else if (mode === "add_pattern") {
+      if (key.name === "return" || key.name === "enter") {
+        if (patternInput.trim()) setMode("add_chain");
+      } else if (key.name === "escape") {
+        setMode("list"); setStatusMsg(null);
+      }
+    } else if (mode === "add_chain") {
+      if (key.name === "return" || key.name === "enter") {
+        const pat = patternInput.trim();
+        const ch = chainInput.trim().split(",").map(s => s.trim()).filter(Boolean);
+        if (pat && ch.length) {
+          if (!config.routing) config.routing = {};
+          config.routing[pat] = ch;
+          saveConfig(config);
+          setConfig(loadConfig());
+          setStatusMsg(`✓ Rule added for '${pat}'`);
+        }
+        setMode("list");
+      } else if (key.name === "escape") {
+        setMode("add_pattern");
+      }
+    } else if (mode === "action" && key.name === "escape") {
+      setMode("list");
     }
   });
 
-  const listHeight = Math.max(4, height - 8);
+  const listHeight = Math.max(3, height - 7);
 
-  if (mode === "add-pattern") {
-    return (
-      <box flexDirection="column" height={height} padding={1} gap={1}>
-        <text>
-          <span fg={C.cyan}>Add Routing Rule — Step 1: Pattern</span>
-        </text>
-        <text>
-          <span fg={C.dim}>Model name pattern (e.g. </span>
-          <span fg={C.yellow}>kimi-*</span>
-          <span fg={C.dim}>, </span>
-          <span fg={C.yellow}>gpt-4o</span>
-          <span fg={C.dim}>, </span>
-          <span fg={C.yellow}>*</span>
-          <span fg={C.dim}>):</span>
-        </text>
-        <box flexDirection="row" gap={1}>
-          <text>
-            <span fg={C.dim}>Pattern: </span>
-          </text>
-          <input
-            value={patternInput}
-            onChange={setPatternInput}
-            placeholder="kimi-*"
-            focused={focused}
-            width={40}
-            backgroundColor={C.bgAlt}
-            textColor={C.text}
-            cursorColor={C.focused}
-            placeholderColor={C.dim}
-          />
-        </box>
-        <text>
-          <span fg={C.dim}>Enter confirm Esc cancel</span>
-        </text>
-      </box>
-    );
-  }
-
-  if (mode === "add-chain") {
-    return (
-      <box flexDirection="column" height={height} padding={1} gap={1}>
-        <text>
-          <span fg={C.cyan}>Add Routing Rule — Step 2: Chain</span>
-        </text>
-        <text>
-          <span fg={C.dim}>Pattern: </span>
-          <span fg={C.yellow}>{patternInput}</span>
-        </text>
-        <text>
-          <span fg={C.dim}>Routing chain, comma-separated:</span>
-        </text>
-        <text>
-          <span fg={C.dim}>Example: </span>
-          <span fg={C.yellow}>kimi@kimi-k2,openrouter@kimi/kimi-k2</span>
-        </text>
-        <box flexDirection="row" gap={1}>
-          <text>
-            <span fg={C.dim}>Chain: </span>
-          </text>
-          <input
-            value={chainInput}
-            onChange={setChainInput}
-            placeholder="provider@model,fallback@model"
-            focused={focused}
-            width={45}
-            backgroundColor={C.bgAlt}
-            textColor={C.text}
-            cursorColor={C.focused}
-            placeholderColor={C.dim}
-          />
-        </box>
-        <text>
-          <span fg={C.dim}>Enter confirm Esc back to pattern</span>
-        </text>
-      </box>
-    );
-  }
-
-  if (mode === "confirm-remove") {
-    const removeOptions: Array<{ name: string; description: string; value: string }> = [
-      ...ruleEntries.map(([pattern, chain], i) => ({
-        name: `${pattern} → ${chain.join(" | ")}`,
-        description: "Select to remove this rule",
-        value: String(i),
-      })),
-      { name: "Back", description: "Return without removing", value: "back" },
-    ];
-
-    return (
-      <box flexDirection="column" height={height}>
-        <box paddingX={1} paddingBottom={1}>
-          <text>
-            <span fg={C.yellow}>Select a rule to remove:</span>
-          </text>
-        </box>
-        <select
-          options={removeOptions}
-          focused={focused}
-          height={listHeight}
-          selectedIndex={ruleIndex}
-          onSelect={handleRemoveSelect}
-          onChange={(idx) => setRuleIndex(idx)}
-          selectedBackgroundColor={C.bgAlt}
-          selectedTextColor={C.focused}
-        />
-        <box paddingX={1} paddingTop={1}>
-          <text>
-            <span fg={C.dim}>Enter remove Esc back</span>
-          </text>
-        </box>
-      </box>
-    );
-  }
-
-  if (mode === "confirm-clear") {
-    return (
-      <box flexDirection="column" height={height} padding={1} gap={1}>
-        <text>
-          <span fg={C.red}>Clear all {ruleCount} routing rule(s)?</span>
-        </text>
-        <select
-          options={[
-            { name: "No, keep rules", description: "Return without clearing", value: "no" },
-            { name: "Yes, clear all", description: "Remove all routing rules", value: "yes" },
-          ]}
-          focused={focused}
-          height={4}
-          selectedIndex={confirmIndex}
-          onSelect={handleConfirmClearSelect}
-          onChange={(idx) => setConfirmIndex(idx)}
-          selectedBackgroundColor={C.bgAlt}
-          selectedTextColor={C.focused}
-        />
-      </box>
-    );
-  }
-
-  // mode === "list"
   return (
     <box flexDirection="column" height={height}>
-      {ruleCount > 0 ? (
-        <box flexDirection="column" padding={1} gap={0}>
-          <text>
-            <span fg={C.dim}>{ruleCount} rule(s) defined:</span>
-          </text>
-          {ruleEntries.map(([pattern, chain]) => (
-            <text key={`rule-${pattern}`}>
-              {"  "}
-              <span fg={C.cyan}>{pattern}</span>
-              <span fg={C.dim}> → </span>
-              <span fg={C.text}>{chain.join(" | ")}</span>
-            </text>
-          ))}
-        </box>
-      ) : (
-        <box padding={1}>
-          <text>
-            <span fg={C.dim}>No custom routing rules configured.</span>
-          </text>
-        </box>
-      )}
-      <box paddingX={1} paddingBottom={1}>
-        <text>
-          <span fg={C.dim}>Format: pattern → provider[@model], fallback chain comma-separated</span>
-        </text>
+      <box height={1} paddingX={1}>
+         <text><span fg={C.dim}>  PATTERN              PROVIDER CHAIN</span></text>
       </box>
+
       <select
-        options={actionOptions}
-        focused={focused}
-        height={Math.max(3, actionOptions.length + 1)}
-        selectedIndex={actionIndex}
-        onSelect={handleActionSelect}
-        onChange={(idx) => setActionIndex(idx)}
+        options={listOptions}
+        focused={focused && mode === "list"}
+        height={listHeight - 1}
+        selectedIndex={itemIndex}
+        onSelect={(idx, opt) => {
+           if (opt?.value === "__add__") {
+             setPatternInput(""); setChainInput(""); setMode("add_pattern");
+           } else {
+             setActionIndex(0); setMode("action");
+           }
+        }}
+        onChange={setItemIndex}
         selectedBackgroundColor={C.bgAlt}
-        selectedTextColor={C.focused}
+        selectedTextColor={C.cyan}
       />
-      {statusMsg && (
-        <box paddingX={1} paddingTop={1}>
-          <text>
-            <span fg={C.green}>{statusMsg}</span>
-          </text>
-        </box>
-      )}
-      <box paddingX={1} paddingTop={1}>
-        <text>
-          <span fg={C.dim}>Enter select Tab switch panel</span>
-        </text>
+      
+      <box height={1}><text><span fg={C.border}>{"─".repeat(50)}</span></text></box>
+
+      <box flexDirection="column" height={7} paddingX={1}>
+        {mode === "list" && (
+           <>
+             <text><strong><span fg={C.yellow}>Routing Behavior</span></strong></text>
+             <text><span fg={C.dim}>Map matched model name requests directly to specific provider chains.</span></text>
+             <text><span fg={C.dim}>Useful for forcing patterns like 'qwen-*' natively through OpenRouter.</span></text>
+             {statusMsg && <text><span fg={C.green}>{statusMsg}</span></text>}
+             {!statusMsg && <text><span fg={C.dim}>Hotkeys: [a] add  [r] remove</span></text>}
+           </>
+        )}
+
+        {mode === "action" && (
+           <>
+             <text><strong><span fg={C.yellow}>Manage Selected Rule</span></strong></text>
+             <select
+               options={[
+                 { name: "Delete Rule", value: "delete" },
+                 { name: "Clear ALL Rules", value: "clear" },
+                 { name: "Back", value: "back" }
+               ]}
+               focused={mode === "action"}
+               height={3}
+               selectedIndex={actionIndex}
+               onSelect={handleActionSelect}
+               onChange={setActionIndex}
+               selectedBackgroundColor={C.dim}
+             />
+           </>
+        )}
+
+        {mode === "add_pattern" && (
+           <box flexDirection="column" gap={1}>
+             <text><strong><span fg={C.yellow}>Step 1: Match Pattern</span></strong><span fg={C.dim}> (e.g. 'kimi-*' or 'gpt-4o')</span></text>
+             <box flexDirection="row">
+               <text><span fg={C.dim}>&gt; </span></text>
+               <input value={patternInput} onChange={setPatternInput} focused={true} width={40} backgroundColor={C.bgAlt} />
+             </box>
+           </box>
+        )}
+
+        {mode === "add_chain" && (
+           <box flexDirection="column" gap={1}>
+             <text><strong><span fg={C.yellow}>Step 2: Provider Chain</span></strong><span fg={C.dim}> (e.g. 'kimi@kimi-k2, openrouter')</span></text>
+             <box flexDirection="row">
+               <text><span fg={C.dim}>&gt; </span></text>
+               <input value={chainInput} onChange={setChainInput} focused={true} width={40} backgroundColor={C.bgAlt} />
+             </box>
+           </box>
+        )}
       </box>
     </box>
   );

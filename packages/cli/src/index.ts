@@ -73,6 +73,8 @@ const isProfileCommand =
   args.some((a, i) => a === "profile" && (i === 0 || !args[i - 1]?.startsWith("-")));
 // Check for telemetry management subcommand
 const isTelemetryCommand = args[0] === "telemetry";
+// Check for stats management subcommand
+const isStatsCommand = args[0] === "stats";
 // Check for interactive config TUI
 const isConfigCommand = args[0] === "config";
 
@@ -166,6 +168,13 @@ if (isMcpMode) {
     tel.initTelemetry({ interactive: true } as any);
     return tel.handleTelemetryCommand(subcommand);
   });
+} else if (isStatsCommand) {
+  // Stats management: claudish stats on|off|status|reset
+  const subcommand = args[1] ?? "status";
+  import("./stats.js").then((stats) => {
+    stats.initStats({ interactive: true } as any);
+    return stats.handleStatsCommand(subcommand);
+  });
 } else if (isConfigCommand) {
   // Interactive configuration TUI: claudish config (full-screen btop-inspired TUI)
   import("./tui/index.js").then((m) => m.startConfigTui().catch(handlePromptExit));
@@ -215,6 +224,11 @@ async function runCli() {
     // Must come after parseArgs() so cliConfig.interactive is known
     const { initTelemetry } = await import("./telemetry.js");
     initTelemetry(cliConfig);
+
+    // Initialize anonymous usage stats (reads consent, detects environment)
+    const { initStats, showMonthlyBanner } = await import("./stats.js");
+    initStats(cliConfig);
+    showMonthlyBanner();
 
     // Show debug log location if enabled
     if (cliConfig.debug && !cliConfig.quiet) {

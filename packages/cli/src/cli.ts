@@ -15,6 +15,9 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { fuzzyScore } from "./utils.js";
 import { getModelMapping } from "./profile-config.js";
+import { parseModelSpec } from "./providers/model-parser.js";
+import { getFallbackChain, warmZenModelCache } from "./providers/auto-route.js";
+import { loadRoutingRules, matchRoutingRule, buildRoutingChain } from "./providers/routing-rules.js";
 // Re-export from centralized provider-resolver for backwards compatibility
 export {
   resolveModelProvider,
@@ -32,7 +35,7 @@ export {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-let VERSION = "5.12.3"; // Fallback version for compiled binaries
+let VERSION = "5.13.0"; // Fallback version for compiled binaries
 try {
   const packageJson = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf-8"));
   VERSION = packageJson.version;
@@ -232,6 +235,23 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       process.exit(0);
     } else if (arg === "--init") {
       await initializeClaudishSkill();
+      process.exit(0);
+    } else if (arg === "--probe") {
+      // Probe models — show fallback chain for each model
+      const probeModels: string[] = [];
+      while (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+        probeModels.push(args[++i]);
+      }
+      // Support comma-separated: --probe minimax-m2.5,kimi-k2.5,gemini-3.1-pro-preview
+      const expandedModels = probeModels.flatMap((m) => m.split(",").map((s) => s.trim()).filter(Boolean));
+      if (expandedModels.length === 0) {
+        console.error("--probe requires at least one model name");
+        console.error("Usage: claudish --probe minimax-m2.5 kimi-k2.5 gemini-3.1-pro-preview");
+        console.error("   or: claudish --probe minimax-m2.5,kimi-k2.5,gemini-3.1-pro-preview");
+        process.exit(1);
+      }
+      const hasJsonFlag = args.includes("--json");
+      await probeModelRouting(expandedModels, hasJsonFlag);
       process.exit(0);
     } else if (arg === "--top-models") {
       // Show recommended/top models (curated list)
@@ -1083,7 +1103,10 @@ async function updateModelsFromOpenRouter(): Promise<void> {
       }
 
       // Bare model name (strip vendor prefix, strip :free suffix)
-      const bareId = modelId.split("/").pop()!.replace(/:free$/, "");
+      const bareId = modelId
+        .split("/")
+        .pop()!
+        .replace(/:free$/, "");
 
       recommendations.push({
         id: bareId,
@@ -1184,6 +1207,237 @@ function printVersion(): void {
 }
 
 /**
+ * Probe model routing — show the fallback chain for each model.
+ * Warm caches first, then display a table of how each model would be routed.
+ */
+async function probeModelRouting(models: string[], jsonOutput: boolean): Promise<void> {
+  // ANSI color codes
+  const GREEN = "\x1b[32m";
+  const RED = "\x1b[31m";
+  const YELLOW = "\x1b[33m";
+  const CYAN = "\x1b[36m";
+  const DIM = "\x1b[2m";
+  const BOLD = "\x1b[1m";
+  const RESET = "\x1b[0m";
+  const BG_DIM = "\x1b[48;5;236m";
+
+  // Pre-warm caches in parallel
+  console.error(`${DIM}Warming provider caches...${RESET}`);
+  await Promise.allSettled([
+    warmZenModelCache(),
+    // LiteLLM cache is disk-based and already populated by proxy start; just ensure it's loaded
+  ]);
+
+  // Load routing rules (from config files)
+  const routingRules = loadRoutingRules();
+
+  // Collect probe results
+  interface ProbeResult {
+    model: string;
+    nativeProvider: string;
+    isExplicit: boolean;
+    routingSource: "direct" | "custom-rules" | "auto-chain";
+    matchedPattern?: string;
+    chain: Array<{
+      provider: string;
+      displayName: string;
+      modelSpec: string;
+      hasCredentials: boolean;
+      credentialHint?: string;
+    }>;
+  }
+
+  const results: ProbeResult[] = [];
+
+  for (const modelInput of models) {
+    const parsed = parseModelSpec(modelInput);
+    const chain = (() => {
+      // Explicit provider — no fallback chain, goes direct
+      if (parsed.isExplicitProvider) {
+        return {
+          routes: [] as ReturnType<typeof getFallbackChain>,
+          source: "direct" as const,
+          matchedPattern: undefined,
+        };
+      }
+      // Check custom routing rules first
+      if (routingRules) {
+        const matched = matchRoutingRule(parsed.model, routingRules);
+        if (matched) {
+          const matchedPattern = Object.keys(routingRules).find((k) => {
+            if (k === parsed.model) return true;
+            if (k.includes("*")) {
+              const star = k.indexOf("*");
+              const prefix = k.slice(0, star);
+              const suffix = k.slice(star + 1);
+              return parsed.model.startsWith(prefix) && parsed.model.endsWith(suffix);
+            }
+            return false;
+          });
+          return {
+            routes: buildRoutingChain(matched, parsed.model),
+            source: "custom-rules" as const,
+            matchedPattern,
+          };
+        }
+      }
+      return {
+        routes: getFallbackChain(parsed.model, parsed.provider),
+        source: "auto-chain" as const,
+        matchedPattern: undefined,
+      };
+    })();
+
+    // Check credentials for each route
+    const API_KEY_MAP: Record<string, { envVar: string; aliases?: string[] }> = {
+      litellm: { envVar: "LITELLM_API_KEY" },
+      openrouter: { envVar: "OPENROUTER_API_KEY" },
+      google: { envVar: "GEMINI_API_KEY" },
+      openai: { envVar: "OPENAI_API_KEY" },
+      minimax: { envVar: "MINIMAX_API_KEY" },
+      "minimax-coding": { envVar: "MINIMAX_CODING_API_KEY" },
+      kimi: { envVar: "MOONSHOT_API_KEY", aliases: ["KIMI_API_KEY"] },
+      "kimi-coding": { envVar: "KIMI_CODING_API_KEY" },
+      glm: { envVar: "ZHIPU_API_KEY", aliases: ["GLM_API_KEY"] },
+      "glm-coding": { envVar: "GLM_CODING_API_KEY", aliases: ["ZAI_CODING_API_KEY"] },
+      zai: { envVar: "ZAI_API_KEY" },
+      ollamacloud: { envVar: "OLLAMA_API_KEY" },
+      "opencode-zen": { envVar: "OPENCODE_API_KEY" },
+      "gemini-codeassist": { envVar: "GEMINI_API_KEY" },
+      vertex: { envVar: "VERTEX_API_KEY", aliases: ["VERTEX_PROJECT"] },
+      poe: { envVar: "POE_API_KEY" },
+    };
+
+    const chainDetails = chain.routes.map((route) => {
+      const keyInfo = API_KEY_MAP[route.provider];
+      let hasCredentials = false;
+      let credentialHint: string | undefined;
+
+      if (!keyInfo) {
+        hasCredentials = true; // Unknown provider — assume OK
+      } else if (!keyInfo.envVar) {
+        hasCredentials = true; // No key needed (free/OAuth)
+      } else {
+        hasCredentials = !!process.env[keyInfo.envVar];
+        if (!hasCredentials && keyInfo.aliases) {
+          hasCredentials = keyInfo.aliases.some((a) => !!process.env[a]);
+        }
+        if (!hasCredentials) {
+          credentialHint = keyInfo.envVar;
+        }
+      }
+
+      return {
+        provider: route.provider,
+        displayName: route.displayName,
+        modelSpec: route.modelSpec,
+        hasCredentials,
+        credentialHint,
+      };
+    });
+
+    results.push({
+      model: modelInput,
+      nativeProvider: parsed.provider,
+      isExplicit: parsed.isExplicitProvider,
+      routingSource: chain.source,
+      matchedPattern: chain.matchedPattern,
+      chain: chainDetails,
+    });
+  }
+
+  // JSON output
+  if (jsonOutput) {
+    console.log(JSON.stringify(results, null, 2));
+    return;
+  }
+
+  // TUI-style output
+  const totalWidth = 80;
+  const line = "─".repeat(totalWidth);
+  const doubleLine = "═".repeat(totalWidth);
+
+  console.log("");
+  console.log(`${BOLD}${CYAN}  PROVIDER ROUTING PROBE${RESET}`);
+  console.log(`  ${DIM}${doubleLine}${RESET}`);
+  console.log("");
+
+  for (const result of results) {
+    // Model header
+    const providerLabel = result.isExplicit
+      ? `${YELLOW}explicit${RESET}`
+      : `${DIM}detected: ${result.nativeProvider}${RESET}`;
+
+    console.log(`  ${BOLD}${result.model}${RESET}  ${providerLabel}`);
+
+    if (result.routingSource === "custom-rules") {
+      const pat = result.matchedPattern ? ` (pattern: "${result.matchedPattern}")` : "";
+      console.log(`  ${CYAN}Custom routing rules${pat}${RESET}`);
+    }
+
+    console.log(`  ${DIM}${line}${RESET}`);
+
+    if (result.routingSource === "direct") {
+      console.log(`  ${GREEN}  Direct → ${result.nativeProvider}${RESET}  (explicit provider prefix, no fallback chain)`);
+    } else if (result.chain.length === 0) {
+      console.log(`  ${RED}  No providers available${RESET} — no credentials configured`);
+    } else {
+      // Fallback chain table
+      const maxProviderLen = Math.max(...result.chain.map((c) => c.displayName.length), 12);
+      const maxSpecLen = Math.max(...result.chain.map((c) => c.modelSpec.length), 10);
+
+      console.log(
+        `  ${DIM}  #  ${"Provider".padEnd(maxProviderLen)}  ${"Model Spec".padEnd(maxSpecLen)}  Status${RESET}`
+      );
+
+      for (let i = 0; i < result.chain.length; i++) {
+        const entry = result.chain[i];
+        const num = `${i + 1}`.padStart(2);
+        const provider = entry.displayName.padEnd(maxProviderLen);
+        const spec = entry.modelSpec.padEnd(maxSpecLen);
+
+        let status: string;
+        if (entry.hasCredentials) {
+          status = `${GREEN}● ready${RESET}`;
+        } else {
+          status = `${RED}○ missing ${DIM}(${entry.credentialHint})${RESET}`;
+        }
+
+        // Highlight first ready provider
+        const isFirstReady = entry.hasCredentials && !result.chain.slice(0, i).some((c) => c.hasCredentials);
+        const prefix = isFirstReady ? `${BG_DIM}` : "";
+        const suffix = isFirstReady ? `${RESET}` : "";
+
+        console.log(`${prefix}  ${num}  ${provider}  ${DIM}${spec}${RESET}  ${status}${suffix}`);
+      }
+
+      // Summary
+      const readyCount = result.chain.filter((c) => c.hasCredentials).length;
+      const firstReady = result.chain.find((c) => c.hasCredentials);
+      if (readyCount === 0) {
+        console.log(`\n  ${RED}  No providers have credentials — this model will fail${RESET}`);
+      } else if (firstReady) {
+        console.log(
+          `\n  ${DIM}  Will use: ${RESET}${GREEN}${firstReady.displayName}${RESET}${DIM} (${readyCount}/${result.chain.length} providers available)${RESET}`
+        );
+      }
+    }
+
+    console.log("");
+  }
+
+  // Legend
+  console.log(`  ${DIM}${line}${RESET}`);
+  console.log(`  ${GREEN}●${RESET} ready    API key found, provider will be attempted`);
+  console.log(`  ${RED}○${RESET} missing  API key not set, provider skipped`);
+  console.log(`  ${BG_DIM}  highlighted  ${RESET} = first provider that will handle the request`);
+  console.log("");
+  console.log(`  ${DIM}Chain order: LiteLLM → Zen → Subscription → Native API → OpenRouter${RESET}`);
+  console.log(`  ${DIM}Custom rules in .claudish.json or ~/.claudish/config.json override default chain${RESET}`);
+  console.log("");
+}
+
+/**
  * Print help message
  */
 function printHelp(): void {
@@ -1262,7 +1516,8 @@ OPTIONS:
   --models                 List ALL models (OpenRouter + OpenCode Zen + Ollama)
   --models <query>         Fuzzy search all models by name, ID, or description
   --top-models             List recommended/top programming models (curated)
-  --json                   Output in JSON format (use with --models or --top-models)
+  --probe <models...>      Show fallback chain for each model (diagnostic)
+  --json                   Output in JSON format (use with --models, --top-models, --probe)
   --force-update           Force refresh model cache from OpenRouter API
   --version                Show version information
   -h, --help               Show this help message
@@ -1483,6 +1738,7 @@ AVAILABLE MODELS:
   List all models:     claudish --models  (includes OpenRouter, OpenCode Zen, Ollama)
   Search models:       claudish --models <query>
   Top recommended:     claudish --top-models
+  Probe routing:       claudish --probe minimax-m2.5 kimi-k2.5 gemini-3.1-pro-preview
   Free models only:    claudish --free  (interactive selector with free models)
   JSON output:         claudish --models --json
   Force cache update:  claudish --models --force-update

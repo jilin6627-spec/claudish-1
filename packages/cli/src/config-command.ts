@@ -179,12 +179,9 @@ async function testProviderConnection(provider: ProviderDef, key: string): Promi
       headers = { Authorization: `Bearer ${key}` };
     } else if (provider.name === "litellm") {
       const config = loadConfig();
-      const baseUrl =
-        config.endpoints?.["LITELLM_BASE_URL"] || process.env.LITELLM_BASE_URL;
+      const baseUrl = config.endpoints?.["LITELLM_BASE_URL"] || process.env.LITELLM_BASE_URL;
       if (!baseUrl) {
-        console.log(
-          `${YELLOW}LiteLLM requires a base URL. Configure it in Providers.${RESET}`
-        );
+        console.log(`${YELLOW}LiteLLM requires a base URL. Configure it in Providers.${RESET}`);
         return;
       }
       url = `${baseUrl}/v1/models`;
@@ -490,7 +487,9 @@ async function configRouting(): Promise<void> {
     console.log(
       `\n${DIM}Format: pattern -> provider[@model], with fallback chain separated by commas.${RESET}`
     );
-    console.log(`${DIM}Example pattern: "kimi-*" -> ["kimi@kimi-k2", "openrouter@kimi-k2"]${RESET}`);
+    console.log(
+      `${DIM}Example pattern: "kimi-*" -> ["kimi@kimi-k2", "openrouter@kimi-k2"]${RESET}`
+    );
     console.log("");
 
     const action = await select({
@@ -524,7 +523,10 @@ async function configRouting(): Promise<void> {
         continue;
       }
 
-      const chain = chainStr.split(",").map((s) => s.trim()).filter(Boolean);
+      const chain = chainStr
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
 
       if (!config.routing) config.routing = {};
       config.routing[pattern.trim()] = chain;
@@ -585,8 +587,7 @@ async function configTelemetry(): Promise<void> {
   const config = loadConfig();
   const telemetry = config.telemetry;
   const envOverride = process.env.CLAUDISH_TELEMETRY;
-  const envDisabled =
-    envOverride === "0" || envOverride === "false" || envOverride === "off";
+  const envDisabled = envOverride === "0" || envOverride === "false" || envOverride === "off";
 
   console.log(`\n${BOLD}Telemetry${RESET}`);
 
@@ -595,9 +596,7 @@ async function configTelemetry(): Promise<void> {
   } else if (!telemetry) {
     console.log(`Status: ${DIM}not yet configured${RESET} (disabled until you opt in)`);
   } else {
-    const state = telemetry.enabled
-      ? `${GREEN}ENABLED${RESET}`
-      : `${YELLOW}DISABLED${RESET}`;
+    const state = telemetry.enabled ? `${GREEN}ENABLED${RESET}` : `${YELLOW}DISABLED${RESET}`;
     console.log(`Status: ${state}`);
     if (telemetry.askedAt) {
       console.log(`${DIM}Configured: ${telemetry.askedAt}${RESET}`);
@@ -711,7 +710,8 @@ function showCurrentConfig(): void {
   // Custom Endpoints
   const configuredEndpoints = Object.entries(config.endpoints ?? {});
   const envEndpoints = PROVIDERS.filter(
-    (p) => p.endpointEnvVar && process.env[p.endpointEnvVar] && !config.endpoints?.[p.endpointEnvVar!]
+    (p) =>
+      p.endpointEnvVar && process.env[p.endpointEnvVar] && !config.endpoints?.[p.endpointEnvVar!]
   );
   if (configuredEndpoints.length > 0 || envEndpoints.length > 0) {
     console.log(`${BOLD}Custom Endpoints${RESET}`);
@@ -722,7 +722,9 @@ function showCurrentConfig(): void {
     }
     for (const p of envEndpoints) {
       const envVal = process.env[p.endpointEnvVar!]!;
-      console.log(`  ${p.displayName.padEnd(16)} ${GREEN}${envVal}${RESET} ${DIM}(env only)${RESET}`);
+      console.log(
+        `  ${p.displayName.padEnd(16)} ${GREEN}${envVal}${RESET} ${DIM}(env only)${RESET}`
+      );
     }
     console.log("");
   }

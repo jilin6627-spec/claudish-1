@@ -2,39 +2,26 @@ import type { SelectOption } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 /** @jsxImportSource @opentui/react */
 import { useCallback, useState } from "react";
+import { loadConfig } from "../profile-config.js";
 import { ApiKeysPanel } from "./panels/ApiKeysPanel.js";
 import { ConfigViewPanel } from "./panels/ConfigViewPanel.js";
 import { ProfilesPanel } from "./panels/ProfilesPanel.js";
 import { ProvidersPanel } from "./panels/ProvidersPanel.js";
 import { RoutingPanel } from "./panels/RoutingPanel.js";
 import { TelemetryPanel } from "./panels/TelemetryPanel.js";
+import { C } from "./theme.js";
 
-// Tokyo Night palette
-const C = {
-  bg: "#1a1b26",
-  bgAlt: "#24283b",
-  borderDim: "#3b4261",
-  borderFocused: "#7aa2f7",
-  title: "#c0caf5",
-  titleAlt: "#7aa2f7",
-  green: "#9ece6a",
-  red: "#f7768e",
-  yellow: "#e0af68",
-  cyan: "#7dcfff",
-  dim: "#565f89",
-  text: "#c0caf5",
-};
+const VERSION = "v5.12.0";
 
-type Section = "apikeys" | "providers" | "profiles" | "routing" | "telemetry" | "config";
+type Section = "apikeys" | "profiles" | "routing" | "telemetry" | "config" | "providers";
 type Panel = "menu" | "content";
 
-const MENU_ITEMS: Array<{ label: string; section: Section; hint: string }> = [
-  { label: "API Keys", section: "apikeys", hint: "Set up provider API keys" },
-  { label: "Providers", section: "providers", hint: "Configure custom endpoints" },
-  { label: "Profiles", section: "profiles", hint: "Manage model profiles" },
-  { label: "Routing", section: "routing", hint: "Custom model routing rules" },
-  { label: "Telemetry", section: "telemetry", hint: "Toggle anonymous error reporting" },
-  { label: "View Config", section: "config", hint: "View current configuration" },
+const MENU_ITEMS: Array<{ label: string; section: Section }> = [
+  { label: "Providers & API Keys", section: "apikeys" },
+  { label: "Profiles", section: "profiles" },
+  { label: "Routing", section: "routing" },
+  { label: "Telemetry", section: "telemetry" },
+  { label: "View Config", section: "config" },
 ];
 
 export function App() {
@@ -43,26 +30,22 @@ export function App() {
   const [activePanel, setActivePanel] = useState<Panel>("menu");
   const [activeSection, setActiveSection] = useState<Section>("apikeys");
   const [menuIndex, setMenuIndex] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+  const [config] = useState(() => loadConfig());
 
-  const quit = useCallback(() => {
-    renderer.destroy();
-  }, [renderer]);
+  const quit = useCallback(() => renderer.destroy(), [renderer]);
+
+  const handleEditingChange = useCallback((editing: boolean) => {
+    setIsEditing(editing);
+    if (!editing) setActivePanel("content");
+  }, []);
 
   useKeyboard((key) => {
-    // Global quit (only when menu panel is focused)
-    if (key.name === "q" && activePanel === "menu") {
-      quit();
-      return;
-    }
-    if (key.ctrl && key.name === "c") {
-      quit();
-      return;
-    }
+    if (key.name === "q" && !isEditing) return quit();
+    if (key.ctrl && key.name === "c") return quit();
 
-    // Tab switches focus between menu and content
-    if (key.name === "tab") {
+    if (key.name === "tab" && !isEditing) {
       setActivePanel((p) => (p === "menu" ? "content" : "menu"));
-      return;
     }
   });
 
@@ -73,37 +56,60 @@ export function App() {
     }
   }, []);
 
-  const menuWidth = 22;
-  const topHeight = Math.max(10, height - 4);
-  const contentHeight = topHeight - 2; // account for border
+  if (height < 15 || width < 60) {
+    return (
+      <box width="100%" height="100%" padding={1} backgroundColor={C.bg}>
+        <text>
+          <span fg={C.red}>Terminal too small ({width}x{height}). Resize to at least 60x15.</span>
+        </text>
+      </box>
+    );
+  }
 
-  const menuOptions = MENU_ITEMS.map((item) => ({
-    name: (activeSection === item.section ? "> " : "  ") + item.label,
-    description: item.hint,
+  const menuWidth = 26;
+  const contentWidth = width - menuWidth;
+  const mainHeight = height - 2; // header + footer
+
+  const menuOptions = MENU_ITEMS.map((item, idx) => ({
+    name: (idx === menuIndex ? "  " : "  ") + item.label,
     value: item.section,
   }));
 
-  const contentTitle = MENU_ITEMS.find((m) => m.section === activeSection)?.label ?? "Content";
+  const activeTitle = MENU_ITEMS.find((m) => m.section === activeSection)?.label ?? "Config";
+
+  // Build header gap
+  const titleText = " Claudish Configuration ";
+  const rightText = ` ${VERSION} | profile: ${config.defaultProfile || "default"} `;
+  const innerWidth = width - 4;
+  const gap = Math.max(1, innerWidth - titleText.length - rightText.length);
+  const headerPad = " ".repeat(gap);
 
   return (
     <box width={width} height={height} flexDirection="column" backgroundColor={C.bg}>
-      {/* Top row: menu + content */}
-      <box flexDirection="row" height={topHeight}>
-        {/* Sidebar menu */}
+      {/* Dense Header */}
+      <box height={1} flexDirection="row" paddingX={2} backgroundColor={C.bgAlt}>
+        <text>
+          <strong><span fg={C.cyan}>{titleText}</span></strong>
+          <span fg={C.bgAlt}>{headerPad}</span>
+          <span fg={C.dim}>{rightText}</span>
+        </text>
+      </box>
+
+      {/* Main Row */}
+      <box flexDirection="row" height={mainHeight}>
+        {/* Navigation Sidebar */}
         <box
-          border
-          borderStyle="single"
-          title=" Menu "
-          borderColor={activePanel === "menu" ? C.borderFocused : C.borderDim}
+          border borderStyle="single" borderColor={activePanel === "menu" ? C.focusBorder : C.border}
+          title=" Navigation "
           width={menuWidth}
-          height={topHeight}
+          height={mainHeight}
           flexDirection="column"
           backgroundColor={C.bg}
         >
           <select
             options={menuOptions}
             focused={activePanel === "menu"}
-            height={topHeight - 2}
+            height={mainHeight - 2}
             selectedIndex={menuIndex}
             onSelect={handleMenuSelect}
             onChange={(idx) => {
@@ -112,49 +118,39 @@ export function App() {
               if (section) setActiveSection(section);
             }}
             selectedBackgroundColor={C.bgAlt}
-            selectedTextColor={C.borderFocused}
+            selectedTextColor={C.cyan}
           />
         </box>
 
-        {/* Content panel */}
+        {/* Content Pane */}
         <box
-          border
-          borderStyle="single"
-          title={` ${contentTitle} `}
-          borderColor={activePanel === "content" ? C.borderFocused : C.borderDim}
-          flexGrow={1}
-          height={topHeight}
+          border borderStyle="single" borderColor={activePanel === "content" ? C.focusBorder : C.border}
+          title={` ${activeTitle} `}
+          width={contentWidth}
+          height={mainHeight}
           backgroundColor={C.bg}
         >
           <ContentPanel
             section={activeSection}
             focused={activePanel === "content"}
-            height={contentHeight}
-            width={width - menuWidth - 4}
+            height={mainHeight - 2}
+            width={contentWidth - 2}
+            onEditingChange={handleEditingChange}
           />
         </box>
       </box>
 
-      {/* Footer */}
-      <box
-        height={3}
-        border
-        borderStyle="single"
-        borderColor={C.borderDim}
-        flexDirection="row"
-        alignItems="center"
-        paddingX={2}
-        backgroundColor={C.bg}
-      >
+      {/* Footer Hints */}
+      <box height={1} flexDirection="row" alignItems="center" paddingX={2}>
         <text>
-          <span fg={C.dim}>Tab</span>
-          <span fg={C.text}> switch panel </span>
-          <span fg={C.dim}>↑↓</span>
-          <span fg={C.text}> navigate </span>
-          <span fg={C.dim}>Enter</span>
-          <span fg={C.text}> select </span>
-          <span fg={C.dim}>q</span>
-          <span fg={C.text}> quit</span>
+          <span fg={C.cyan}>Tab</span>
+          <span fg={C.dim}> switch  │  </span>
+          <span fg={C.cyan}>↑↓</span>
+          <span fg={C.dim}> browse  │  </span>
+          <span fg={C.cyan}>Enter</span>
+          <span fg={C.dim}> configure/select  │  </span>
+          <span fg={C.cyan}>Esc/q</span>
+          <span fg={C.dim}> back/quit</span>
         </text>
       </box>
     </box>
@@ -166,20 +162,21 @@ interface ContentPanelProps {
   focused: boolean;
   height: number;
   width: number;
+  onEditingChange: (editing: boolean) => void;
 }
 
-function ContentPanel({ section, focused, height, width: _width }: ContentPanelProps) {
+function ContentPanel({ section, focused, height, width, onEditingChange }: ContentPanelProps) {
   switch (section) {
     case "apikeys":
-      return <ApiKeysPanel focused={focused} height={height} />;
+      return <ApiKeysPanel focused={focused} height={height} width={width} onEditingChange={onEditingChange} />;
     case "providers":
-      return <ProvidersPanel focused={focused} height={height} />;
+      return <ProvidersPanel />;
     case "profiles":
-      return <ProfilesPanel focused={focused} height={height} />;
+      return <ProfilesPanel focused={focused} height={height} width={width} />;
     case "routing":
-      return <RoutingPanel focused={focused} height={height} />;
+      return <RoutingPanel focused={focused} height={height} onEditingChange={onEditingChange} />;
     case "telemetry":
-      return <TelemetryPanel focused={focused} height={height} />;
+      return <TelemetryPanel focused={focused} height={height} onEditingChange={onEditingChange} />;
     case "config":
       return <ConfigViewPanel focused={focused} height={height} />;
     default:

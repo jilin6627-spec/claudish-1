@@ -12,6 +12,7 @@
 import type { Context } from "hono";
 import type { ModelHandler } from "./types.js";
 import { logStderr } from "../logger.js";
+import { ComposedHandler } from "./composed-handler.js";
 
 export interface FallbackCandidate {
   /** Human-readable provider name for logging */
@@ -40,6 +41,19 @@ export class FallbackHandler implements ModelHandler {
       const isLast = i === this.candidates.length - 1;
 
       try {
+        // If previous attempts failed, signal the winning handler to include fallback metadata
+        // in its own stats event. This avoids a duplicate stats event with incomplete data.
+        if (errors.length > 0 && handler instanceof ComposedHandler) {
+          try {
+            handler.setFallbackMeta(
+              this.candidates.map((c) => c.name),
+              errors.length
+            );
+          } catch {
+            // Stats must never crash claudish
+          }
+        }
+
         const response = await handler.handle(c, payload);
 
         // Success — return immediately
@@ -87,7 +101,10 @@ export class FallbackHandler implements ModelHandler {
     modelName?: string
   ): Response {
     const summary = errors
-      .map((e) => `  ${e.provider}: HTTP ${e.status || "ERR"} — ${truncate(parseErrorMessage(e.message), 150)}`)
+      .map(
+        (e) =>
+          `  ${e.provider}: HTTP ${e.status || "ERR"} — ${truncate(parseErrorMessage(e.message), 150)}`
+      )
       .join("\n");
 
     logStderr(

@@ -15,7 +15,7 @@ import { VertexOAuthProvider, parseVertexModel } from "./providers/transport/ver
 import { DefaultAdapter } from "./adapters/base-adapter.js";
 import { PoeProvider } from "./providers/transport/poe.js";
 import type { ModelHandler } from "./handlers/types.js";
-import { ComposedHandler } from "./handlers/composed-handler.js";
+import { ComposedHandler, type ComposedHandlerOptions } from "./handlers/composed-handler.js";
 import { LiteLLMProvider } from "./providers/transport/litellm.js";
 import { LiteLLMAdapter } from "./adapters/litellm-adapter.js";
 import { OpenAIProvider } from "./providers/transport/openai.js";
@@ -46,8 +46,12 @@ import {
 } from "./providers/model-catalog-resolver.js";
 import { FallbackHandler } from "./handlers/fallback-handler.js";
 import type { FallbackCandidate } from "./handlers/fallback-handler.js";
-import { getFallbackChain } from "./providers/auto-route.js";
-import { loadRoutingRules, matchRoutingRule, buildRoutingChain } from "./providers/routing-rules.js";
+import { getFallbackChain, warmZenModelCache } from "./providers/auto-route.js";
+import {
+  loadRoutingRules,
+  matchRoutingRule,
+  buildRoutingChain,
+} from "./providers/routing-rules.js";
 
 export interface ProxyServerOptions {
   summarizeTools?: boolean; // Summarize tool descriptions for local models
@@ -72,7 +76,10 @@ export async function createProxyServer(
   const poeHandlers = new Map<string, ModelHandler>(); // Map from Target Model ID -> Poe Handler
 
   // Helper to get or create OpenRouter handler for a target model
-  const getOpenRouterHandler = (targetModel: string): ModelHandler => {
+  const getOpenRouterHandler = (
+    targetModel: string,
+    invocationMode?: ComposedHandlerOptions["invocationMode"]
+  ): ModelHandler => {
     // For explicit @ syntax: strip provider prefix (openrouter@google/gemini → google/gemini)
     // For already-resolved vendor/model IDs (qwen/qwen3.5-plus-02-15): use as-is to preserve
     // the vendor prefix that OpenRouter requires. parseModelSpec() would otherwise strip it
@@ -88,6 +95,7 @@ export async function createProxyServer(
         new ComposedHandler(orProvider, modelId, modelId, port, {
           adapter: orAdapter,
           isInteractive: options.isInteractive,
+          invocationMode,
         })
       );
     }
@@ -95,7 +103,10 @@ export async function createProxyServer(
   };
 
   // Helper to get or create Poe handler for a target model
-  const getPoeHandler = (targetModel: string): ModelHandler | null => {
+  const getPoeHandler = (
+    targetModel: string,
+    invocationMode?: ComposedHandlerOptions["invocationMode"]
+  ): ModelHandler | null => {
     const poeApiKey = process.env.POE_API_KEY;
     if (!poeApiKey) {
       log(`[Proxy] POE_API_KEY not set, cannot use Poe model: ${targetModel}`);
@@ -109,6 +120,7 @@ export async function createProxyServer(
         modelId,
         new ComposedHandler(poeTransport, modelId, modelId, port, {
           isInteractive: options.isInteractive,
+          invocationMode,
         })
       );
     }
@@ -121,7 +133,10 @@ export async function createProxyServer(
   };
 
   // Helper to get or create Local Provider handler for a target model
-  const getLocalProviderHandler = (targetModel: string): ModelHandler | null => {
+  const getLocalProviderHandler = (
+    targetModel: string,
+    invocationMode?: ComposedHandlerOptions["invocationMode"]
+  ): ModelHandler | null => {
     if (localProviderHandlers.has(targetModel)) {
       return localProviderHandlers.get(targetModel)!;
     }
@@ -138,6 +153,7 @@ export async function createProxyServer(
         tokenStrategy: "local",
         summarizeTools: options.summarizeTools,
         isInteractive: options.isInteractive,
+        invocationMode,
       });
       localProviderHandlers.set(targetModel, handler);
       log(
@@ -162,6 +178,7 @@ export async function createProxyServer(
           tokenStrategy: "local",
           summarizeTools: options.summarizeTools,
           isInteractive: options.isInteractive,
+          invocationMode,
         }
       );
       localProviderHandlers.set(targetModel, handler);
@@ -176,7 +193,10 @@ export async function createProxyServer(
 
   // Helper to get or create remote provider handler (Gemini, OpenAI)
   // TODO: Consolidate src/ and packages/core/src/ - they're manually synced duplicates
-  const getRemoteProviderHandler = (targetModel: string): ModelHandler | null => {
+  const getRemoteProviderHandler = (
+    targetModel: string,
+    invocationMode?: ComposedHandlerOptions["invocationMode"]
+  ): ModelHandler | null => {
     if (remoteProviderHandlers.has(targetModel)) {
       return remoteProviderHandlers.get(targetModel)!;
     }
@@ -229,6 +249,7 @@ export async function createProxyServer(
         handler = new ComposedHandler(gemProvider, targetModel, resolved.modelName, port, {
           adapter: gemAdapter,
           isInteractive: options.isInteractive,
+          invocationMode,
         });
         log(`[Proxy] Created Gemini handler (composed): ${resolved.modelName}`);
       } else if (resolved.provider.name === "gemini-codeassist") {
@@ -238,6 +259,7 @@ export async function createProxyServer(
           adapter: gcaAdapter,
           unwrapGeminiResponse: true,
           isInteractive: options.isInteractive,
+          invocationMode,
         });
         log(`[Proxy] Created Gemini Code Assist handler (composed): ${resolved.modelName}`);
       } else if (resolved.provider.name === "openai") {
@@ -248,6 +270,7 @@ export async function createProxyServer(
           adapter: oaiAdapter,
           tokenStrategy: "delta-aware",
           isInteractive: options.isInteractive,
+          invocationMode,
         });
         log(`[Proxy] Created OpenAI handler (composed): ${resolved.modelName}`);
       } else if (
@@ -266,6 +289,7 @@ export async function createProxyServer(
         handler = new ComposedHandler(acProvider, targetModel, resolved.modelName, port, {
           adapter: acAdapter,
           isInteractive: options.isInteractive,
+          invocationMode,
         });
         log(`[Proxy] Created ${resolved.provider.name} handler (composed): ${resolved.modelName}`);
       } else if (resolved.provider.name === "glm" || resolved.provider.name === "glm-coding") {
@@ -276,6 +300,7 @@ export async function createProxyServer(
           adapter: glmAdapter,
           tokenStrategy: "delta-aware",
           isInteractive: options.isInteractive,
+          invocationMode,
         });
         log(`[Proxy] Created ${resolved.provider.name} handler (composed): ${resolved.modelName}`);
       } else if (
@@ -297,6 +322,7 @@ export async function createProxyServer(
           handler = new ComposedHandler(zenAcProvider, targetModel, resolved.modelName, port, {
             adapter: zenAcAdapter,
             isInteractive: options.isInteractive,
+            invocationMode,
           });
           log(
             `[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (Anthropic composed): ${resolved.modelName}`
@@ -308,6 +334,7 @@ export async function createProxyServer(
             adapter: zenAdapter,
             tokenStrategy: "delta-aware",
             isInteractive: options.isInteractive,
+            invocationMode,
           });
           log(
             `[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (composed): ${resolved.modelName}`
@@ -321,6 +348,7 @@ export async function createProxyServer(
           adapter: ocAdapter,
           tokenStrategy: "accumulate-both",
           isInteractive: options.isInteractive,
+          invocationMode,
         });
         log(`[Proxy] Created OllamaCloud handler (composed): ${resolved.modelName}`);
       } else if (resolved.provider.name === "litellm") {
@@ -338,6 +366,7 @@ export async function createProxyServer(
         handler = new ComposedHandler(provider, targetModel, resolved.modelName, port, {
           adapter,
           isInteractive: options.isInteractive,
+          invocationMode,
         });
         log(
           `[Proxy] Created LiteLLM handler (composed): ${resolved.modelName} (${resolved.provider.baseUrl})`
@@ -365,6 +394,7 @@ export async function createProxyServer(
           handler = new ComposedHandler(vxGemProvider, targetModel, resolved.modelName, port, {
             adapter: vxGemAdapter,
             isInteractive: options.isInteractive,
+            invocationMode,
           });
           log(`[Proxy] Created Vertex AI Express handler (composed): ${resolved.modelName}`);
         } else if (vertexConfig) {
@@ -397,6 +427,7 @@ export async function createProxyServer(
             adapter: vxAdapter,
             ...handlerOpts,
             isInteractive: options.isInteractive,
+            invocationMode,
           });
           log(
             `[Proxy] Created Vertex AI OAuth handler (composed): ${resolved.modelName} [${parsed.publisher}] (project: ${vertexConfig.projectId})`
@@ -429,10 +460,13 @@ export async function createProxyServer(
       .then(() => {
         log("[Proxy] LiteLLM model cache pre-warmed for auto-routing");
       })
-      .catch(() => {
-        // Silently ignore - auto-routing will skip LiteLLM if cache unavailable
-      });
+      .catch(() => {});
   }
+
+  // Pre-warm Zen model cache for fallback chain filtering (non-blocking)
+  warmZenModelCache()
+    .then(() => log("[Proxy] Zen model cache pre-warmed for fallback filtering"))
+    .catch(() => {});
 
   // Load custom routing rules once at startup (local .claudish.json takes priority over global)
   const customRoutingRules = loadRoutingRules();
@@ -442,6 +476,26 @@ export async function createProxyServer(
   // (new API keys) take effect on next session start.
   const fallbackHandlerCache = new Map<string, ModelHandler>();
 
+  // Detect the invocation mode for a given target model string.
+  // Used to populate stats: how did the user specify this model?
+  const detectInvocationMode = (
+    target: string,
+    wasFromModelMap: boolean
+  ): ComposedHandlerOptions["invocationMode"] => {
+    if (wasFromModelMap) return "model-map";
+    if (!target) return "auto-route";
+    const parsedSpec = parseModelSpec(target);
+    if (parsedSpec.isExplicitProvider) {
+      // Check if this came from env var (CLAUDISH_MODEL or ANTHROPIC_MODEL)
+      const envModel = process.env.CLAUDISH_MODEL || process.env.ANTHROPIC_MODEL;
+      if (envModel && (target === envModel || parsedSpec.model === envModel)) {
+        return "env-var";
+      }
+      return "explicit-model";
+    }
+    return "auto-route";
+  };
+
   const getHandlerForRequest = (requestedModel: string): ModelHandler => {
     // 1. Monitor Mode Override
     if (monitorMode) return nativeHandler;
@@ -449,19 +503,29 @@ export async function createProxyServer(
     // 2. Resolve target model based on mappings or defaults
     // Priority: role mappings > default model (--model) > requested model (native)
     let target = requestedModel;
+    let wasFromModelMap = false;
 
     const req = requestedModel.toLowerCase();
     if (modelMap) {
       // Role-specific mappings take highest priority
-      if (req.includes("opus") && modelMap.opus) target = modelMap.opus;
-      else if (req.includes("sonnet") && modelMap.sonnet) target = modelMap.sonnet;
-      else if (req.includes("haiku") && modelMap.haiku) target = modelMap.haiku;
+      if (req.includes("opus") && modelMap.opus) {
+        target = modelMap.opus;
+        wasFromModelMap = true;
+      } else if (req.includes("sonnet") && modelMap.sonnet) {
+        target = modelMap.sonnet;
+        wasFromModelMap = true;
+      } else if (req.includes("haiku") && modelMap.haiku) {
+        target = modelMap.haiku;
+        wasFromModelMap = true;
+      }
       // Default model (--model) is fallback for all roles
       else if (model) target = model;
     } else if (model) {
       // No role mappings at all - use default model
       target = model;
     }
+
+    const invocationMode = detectInvocationMode(target, wasFromModelMap);
 
     // 2b. Catalog resolution — resolve vendor prefix for OpenRouter and LiteLLM
     // This must happen after target is determined but before handler construction.
@@ -505,9 +569,9 @@ export async function createProxyServer(
           for (const route of chain) {
             let handler: ModelHandler | null = null;
             if (route.provider === "openrouter") {
-              handler = getOpenRouterHandler(route.modelSpec);
+              handler = getOpenRouterHandler(route.modelSpec, invocationMode);
             } else {
-              handler = getRemoteProviderHandler(route.modelSpec);
+              handler = getRemoteProviderHandler(route.modelSpec, invocationMode);
             }
             if (handler) {
               candidates.push({ name: route.displayName, handler });
@@ -516,9 +580,7 @@ export async function createProxyServer(
 
           if (candidates.length > 0) {
             const resultHandler =
-              candidates.length > 1
-                ? new FallbackHandler(candidates)
-                : candidates[0].handler;
+              candidates.length > 1 ? new FallbackHandler(candidates) : candidates[0].handler;
 
             fallbackHandlerCache.set(cacheKey, resultHandler);
 
@@ -536,7 +598,7 @@ export async function createProxyServer(
 
     // 3. Check for Poe Model (poe: prefix)
     if (isPoeModel(target)) {
-      const poeHandler = getPoeHandler(target);
+      const poeHandler = getPoeHandler(target, invocationMode);
       if (poeHandler) {
         log(`[Proxy] Routing to Poe: ${target}`);
         return poeHandler;
@@ -544,11 +606,11 @@ export async function createProxyServer(
     }
 
     // 4. Check for Remote Provider (g/, gemini/, oai/, openai/, mmax/, mm/, kimi/, moonshot/, glm/, zhipu/)
-    const remoteHandler = getRemoteProviderHandler(target);
+    const remoteHandler = getRemoteProviderHandler(target, invocationMode);
     if (remoteHandler) return remoteHandler;
 
     // 5. Check for Local Provider (ollama/, lmstudio/, vllm/, or URL)
-    const localHandler = getLocalProviderHandler(target);
+    const localHandler = getLocalProviderHandler(target, invocationMode);
     if (localHandler) return localHandler;
 
     // 6. Native vs OpenRouter Decision
@@ -564,7 +626,7 @@ export async function createProxyServer(
     }
 
     // 7. OpenRouter Handler (default for any model with "/" or explicit provider not matched above)
-    return getOpenRouterHandler(target);
+    return getOpenRouterHandler(target, invocationMode);
   };
 
   const app = new Hono();

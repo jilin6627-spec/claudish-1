@@ -197,17 +197,17 @@ describe("Group 1: Fallback chain construction", () => {
     expect(sub.modelSpec).toContain("gemini-2.0-flash");
   });
 
-  test("unknown provider still gets LiteLLM, Zen, and OpenRouter", () => {
+  test("unknown provider gets LiteLLM and OpenRouter but NOT Zen (model not in catalog)", () => {
     const chain = getFallbackChain("some-unknown-model", "unknown");
     const providers = chain.map((r: any) => r.provider);
 
     expect(providers).not.toContain("unknown");
 
+    // Zen is filtered out — "some-unknown-model" won't be in the Zen catalog
+    expect(providers).not.toContain("opencode-zen");
+
     if (process.env.LITELLM_BASE_URL && process.env.LITELLM_API_KEY) {
       expect(providers).toContain("litellm");
-    }
-    if (process.env.OPENCODE_API_KEY) {
-      expect(providers).toContain("opencode-zen");
     }
     if (process.env.OPENROUTER_API_KEY) {
       expect(providers).toContain("openrouter");
@@ -380,7 +380,8 @@ describe("Group 5: isRetryableError — unit tests via FallbackHandler behavior"
 
   function mockHandler(status: number, body: string) {
     return {
-      handle: async () => new Response(body, { status, headers: { "content-type": "application/json" } }),
+      handle: async () =>
+        new Response(body, { status, headers: { "content-type": "application/json" } }),
       shutdown: async () => {},
     };
   }
@@ -388,7 +389,10 @@ describe("Group 5: isRetryableError — unit tests via FallbackHandler behavior"
   async function runFallback(firstStatus: number, firstBody: string): Promise<any> {
     const handler = new FallbackHandler([
       { name: "provider-a", handler: mockHandler(firstStatus, firstBody) },
-      { name: "provider-b", handler: mockHandler(200, '{"content":[{"type":"text","text":"ok"}]}') },
+      {
+        name: "provider-b",
+        handler: mockHandler(200, '{"content":[{"type":"text","text":"ok"}]}'),
+      },
     ]);
     const app = new Hono();
     let result: any;

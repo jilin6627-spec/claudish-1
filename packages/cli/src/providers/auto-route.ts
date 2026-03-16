@@ -339,6 +339,58 @@ const SUBSCRIPTION_ALTERNATIVES: Record<string, SubscriptionAlternative> = {
   },
 };
 
+/**
+ * Read the cached Zen model list from disk (written by warmZenModelCache).
+ * Returns a Set of model IDs that Zen serves, or null if cache not available.
+ */
+function readZenModelCacheSync(): Set<string> | null {
+  const cachePath = join(homedir(), ".claudish", "zen-models.json");
+  if (!existsSync(cachePath)) return null;
+  try {
+    const data = JSON.parse(readFileSync(cachePath, "utf-8"));
+    if (!Array.isArray(data.models)) return null;
+    return new Set(data.models.map((m: any) => m.id));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a model is served by OpenCode Zen.
+ * Uses the cached model list from zen/v1/models. If cache is unavailable,
+ * conservatively returns false (skip Zen rather than waste a request).
+ */
+function isZenCompatibleModel(modelName: string): boolean {
+  const zenModels = readZenModelCacheSync();
+  if (!zenModels) return false;
+  return zenModels.has(modelName);
+}
+
+/**
+ * Pre-warm the Zen model cache by fetching from the live API.
+ * Called at proxy startup (non-blocking). Writes to ~/.claudish/zen-models.json.
+ */
+export async function warmZenModelCache(): Promise<void> {
+  const apiKey = process.env.OPENCODE_API_KEY || "public";
+  const baseUrl = process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen";
+  const resp = await fetch(`${baseUrl}/v1/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!resp.ok) return;
+  const data = await resp.json() as any;
+  const models = (data.data ?? []).map((m: any) => ({ id: m.id }));
+  if (models.length === 0) return;
+
+  const cacheDir = join(homedir(), ".claudish");
+  const { mkdirSync, writeFileSync: writeSync } = await import("node:fs");
+  mkdirSync(cacheDir, { recursive: true });
+  writeSync(
+    join(cacheDir, "zen-models.json"),
+    JSON.stringify({ models, fetchedAt: new Date().toISOString() })
+  );
+}
+
 /** Check if credentials exist for a given provider (API key, aliases, or OAuth). */
 function hasProviderCredentials(provider: string): boolean {
   const keyInfo = API_KEY_ENV_VARS[provider];
@@ -369,8 +421,8 @@ export function getFallbackChain(modelName: string, nativeProvider: string): Fal
     });
   }
 
-  // 2. Subscription aggregator (OpenCode Zen — covers many models without per-provider keys)
-  if (process.env.OPENCODE_API_KEY) {
+  // 2. Subscription aggregator (OpenCode Zen — only for model families it actually serves)
+  if (process.env.OPENCODE_API_KEY && isZenCompatibleModel(modelName)) {
     routes.push({
       provider: "opencode-zen",
       modelSpec: `zen@${modelName}`,

@@ -1,287 +1,219 @@
 import type { SelectOption } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 /** @jsxImportSource @opentui/react */
-import { useCallback, useState } from "react";
-import { loadConfig, removeApiKey, setApiKey } from "../../profile-config.js";
-import { PROVIDERS, type ProviderDef, maskKey } from "../providers.js";
+import { useCallback, useEffect, useState } from "react";
+import { loadConfig, removeApiKey, removeEndpoint, setApiKey, setEndpoint } from "../../profile-config.js";
+import { PROVIDERS, maskKey } from "../providers.js";
+import { C } from "../theme.js";
 
-// Tokyo Night palette
-const C = {
-  green: "#9ece6a",
-  red: "#f7768e",
-  yellow: "#e0af68",
-  cyan: "#7dcfff",
-  dim: "#565f89",
-  text: "#c0caf5",
-  bg: "#1a1b26",
-  bgAlt: "#24283b",
-  focused: "#7aa2f7",
-};
-
-type Mode = "list" | "action" | "input";
+type Mode = "browse" | "action" | "input_key" | "input_endpoint";
 
 interface ApiKeysPanelProps {
   focused: boolean;
   height: number;
+  width: number;
+  onEditingChange?: (editing: boolean) => void;
 }
 
-export function ApiKeysPanel({ focused, height }: ApiKeysPanelProps) {
-  const [mode, setMode] = useState<Mode>("list");
-  const [selectedProviderIndex, setSelectedProviderIndex] = useState(0);
+function pad(str: string, len: number) {
+  return str.padEnd(len).substring(0, len);
+}
+
+export function ApiKeysPanel({ focused, height, width, onEditingChange }: ApiKeysPanelProps) {
+  const [config, setConfig] = useState(() => loadConfig());
+  const [mode, setMode] = useState<Mode>("browse");
+  const [itemIndex, setItemIndex] = useState(0);
   const [actionIndex, setActionIndex] = useState(0);
   const [inputValue, setInputValue] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  const config = loadConfig();
+  useEffect(() => {
+    onEditingChange?.(mode !== "browse");
+  }, [mode, onEditingChange]);
 
-  const getKeyStatus = (p: ProviderDef) => {
-    const envSet = !!process.env[p.apiKeyEnvVar];
-    const configSet = !!config.apiKeys?.[p.apiKeyEnvVar];
-    return { envSet, configSet };
-  };
-
-  const selectedProvider = PROVIDERS[selectedProviderIndex];
+  const selectedProvider = PROVIDERS[itemIndex]!;
 
   const getActionOptions = useCallback(() => {
     const p = selectedProvider;
-    const cfg = loadConfig();
-    const configSet = !!cfg.apiKeys?.[p.apiKeyEnvVar];
-    const opts: Array<{ name: string; description: string; value: string }> = [
-      {
-        name: "Set API key",
-        description: `Store ${p.apiKeyEnvVar} in ~/.claudish/config.json`,
-        value: "set",
-      },
+    const hasCfgKey = !!config.apiKeys?.[p.apiKeyEnvVar];
+    const hasCfgEnd = p.endpointEnvVar ? !!config.endpoints?.[p.endpointEnvVar] : false;
+
+    const opts: Array<{ name: string; value: string }> = [
+      { name: "Set API Key...", value: "set_key" },
     ];
-    if (configSet) {
-      opts.push({
-        name: "Remove stored key",
-        description: "Remove from config (env var unaffected)",
-        value: "remove",
-      });
+    if (hasCfgKey) opts.push({ name: "Remove stored API Key", value: "rm_key" });
+
+    if (p.endpointEnvVar) {
+      opts.push({ name: "Set Custom Endpoint...", value: "set_end" });
+      if (hasCfgEnd) opts.push({ name: "Remove Custom Endpoint", value: "rm_end" });
     }
-    opts.push({ name: "Back", description: "Return to provider list", value: "back" });
+    opts.push({ name: "Back", value: "back" });
     return opts;
-  }, [selectedProvider]);
+  }, [selectedProvider, config]);
 
-  const handleListSelect = useCallback((_idx: number, opt: SelectOption | null) => {
+  const handleActionSelect = useCallback((_idx: number, opt: SelectOption | null) => {
     if (!opt?.value) return;
-    const idx = PROVIDERS.findIndex((p) => p.name === opt.value);
-    if (idx >= 0) {
-      setSelectedProviderIndex(idx);
-      setActionIndex(0);
-      setMode("action");
-      setStatusMsg(null);
-    }
-  }, []);
+    const { value } = opt;
+    setStatusMsg(null);
 
-  const handleActionSelect = useCallback(
-    (_idx: number, opt: SelectOption | null) => {
-      if (!opt?.value) return;
-      if (opt.value === "back") {
-        setMode("list");
-        setStatusMsg(null);
-        return;
-      }
-      if (opt.value === "set") {
-        setInputValue("");
-        setMode("input");
-        return;
-      }
-      if (opt.value === "remove" && selectedProvider) {
-        removeApiKey(selectedProvider.apiKeyEnvVar);
-        setStatusMsg("Key removed from config.");
-        setMode("list");
-        return;
-      }
-    },
-    [selectedProvider]
-  );
-
-  const handleInputConfirm = useCallback(() => {
-    if (!selectedProvider) return;
-    const val = inputValue.trim();
-    if (!val) {
-      setStatusMsg("No key entered.");
-      setMode("action");
-      return;
+    if (value === "back") {
+      setMode("browse");
+    } else if (value === "set_key") {
+      setInputValue("");
+      setMode("input_key");
+    } else if (value === "set_end") {
+      setInputValue(selectedProvider.endpointEnvVar ? config.endpoints?.[selectedProvider.endpointEnvVar] || "" : "");
+      setMode("input_endpoint");
+    } else if (value === "rm_key") {
+      removeApiKey(selectedProvider.apiKeyEnvVar);
+      setConfig(loadConfig());
+      setStatusMsg("✓ Key removed from config.");
+      setMode("browse");
+    } else if (value === "rm_end" && selectedProvider.endpointEnvVar) {
+      removeEndpoint(selectedProvider.endpointEnvVar);
+      setConfig(loadConfig());
+      setStatusMsg("✓ Endpoint reset.");
+      setMode("browse");
     }
-    setApiKey(selectedProvider.apiKeyEnvVar, val);
-    process.env[selectedProvider.apiKeyEnvVar] = val;
-    setStatusMsg(`Key saved for ${selectedProvider.displayName}.`);
-    setInputValue("");
-    setMode("list");
-  }, [inputValue, selectedProvider]);
+  }, [selectedProvider, config]);
 
   useKeyboard((key) => {
     if (!focused) return;
-
-    if (mode === "input") {
+    if (mode === "input_key" || mode === "input_endpoint") {
       if (key.name === "return" || key.name === "enter") {
-        handleInputConfirm();
+        const val = inputValue.trim();
+        if (!val) {
+          setStatusMsg("✗ Aborted (empty).");
+          setMode("browse");
+          return;
+        }
+        if (mode === "input_key") {
+          setApiKey(selectedProvider.apiKeyEnvVar, val);
+          process.env[selectedProvider.apiKeyEnvVar] = val;
+          setStatusMsg(`✓ API Key saved for ${selectedProvider.displayName}.`);
+        } else {
+          setEndpoint(selectedProvider.endpointEnvVar!, val);
+          process.env[selectedProvider.endpointEnvVar!] = val;
+          setStatusMsg(`✓ Custom endpoint saved.`);
+        }
+        setConfig(loadConfig());
+        setInputValue("");
+        setMode("browse");
       } else if (key.name === "escape") {
         setMode("action");
-        setInputValue("");
       }
-      return;
-    }
-
-    if (key.name === "escape" || key.name === "q") {
-      if (mode === "action") {
-        setMode("list");
-        setStatusMsg(null);
-      }
+    } else if (mode === "action" && (key.name === "escape" || key.name === "q")) {
+      setMode("browse");
     }
   });
 
+  const listHeight = Math.max(3, height - 8);
+  const bottomHeight = height - listHeight - 1;
+
+  // Render highly-dense single line row arrays
   const listOptions = PROVIDERS.map((p) => {
-    const { envSet, configSet } = getKeyStatus(p);
-    let statusLabel: string;
-    if (envSet && configSet) statusLabel = " set (env+cfg)";
-    else if (envSet) statusLabel = " set (env)    ";
-    else if (configSet) statusLabel = " set (config) ";
-    else statusLabel = " not set      ";
+    const hasEnvK = !!process.env[p.apiKeyEnvVar];
+    const hasCfgK = !!config.apiKeys?.[p.apiKeyEnvVar];
+    const icon = hasEnvK || hasCfgK ? "✓" : "✗";
 
-    const icon = envSet || configSet ? "+" : "-";
+    const kStr = p.apiKeyEnvVar ? pad(maskKey(hasCfgK ? config.apiKeys![p.apiKeyEnvVar] : process.env[p.apiKeyEnvVar]), 8) : "        ";
+    const kSrc = hasEnvK && hasCfgK ? "e+c" : hasEnvK ? "env" : hasCfgK ? "cfg" : "---";
 
+    let eSrc = "   ";
+    if (p.endpointEnvVar) {
+      const hasEnvE = !!process.env[p.endpointEnvVar];
+      const hasCfgE = !!config.endpoints?.[p.endpointEnvVar];
+      eSrc = hasEnvE && hasCfgE ? "e+c" : hasEnvE ? "env" : hasCfgE ? "cfg" : "def";
+    }
+
+    // Exact string length ensures columns align without jitter
+    // Format: "[v] [Provider      ] [key.....] [src] [url]"
     return {
-      name: `${icon} ${p.displayName.padEnd(16)} ${statusLabel}`,
-      description: p.description,
+      name: ` ${icon}  ${pad(p.displayName, 14)} ${kStr}   ${pad(kSrc, 3)}   ${pad(eSrc, 3)}`,
       value: p.name,
     };
   });
 
-  const listHeight = Math.max(4, height - 6);
+  // Fetch contextual values for the active sub-pane item
+  const envKeyMask = maskKey(process.env[selectedProvider.apiKeyEnvVar]);
+  const cfgKeyMask = maskKey(config.apiKeys?.[selectedProvider.apiKeyEnvVar]);
+  const activeUrl = config.endpoints?.[selectedProvider.endpointEnvVar!] || process.env[selectedProvider.endpointEnvVar!] || selectedProvider.defaultEndpoint || "None";
 
-  if (mode === "list") {
-    return (
-      <box flexDirection="column" height={height}>
-        <select
-          options={listOptions}
-          focused={focused}
-          height={listHeight}
-          selectedIndex={selectedProviderIndex}
-          onSelect={handleListSelect}
-          onChange={(idx) => setSelectedProviderIndex(idx)}
-          showScrollIndicator
-          selectedBackgroundColor={C.bgAlt}
-          selectedTextColor={C.focused}
-        />
-        {statusMsg && (
-          <box paddingX={1}>
-            <text>
-              <span fg={C.green}>{statusMsg}</span>
-            </text>
-          </box>
-        )}
-        <box paddingX={1} paddingTop={1}>
-          <text>
-            <span fg={C.dim}>Enter select Esc/q back Tab switch panel</span>
-          </text>
-        </box>
-      </box>
-    );
-  }
+  const divider = "─".repeat(Math.max(1, width - 2));
 
-  if (mode === "action") {
-    const cfg = loadConfig();
-    const p = selectedProvider;
-    if (!p) return null;
-    const envKey = process.env[p.apiKeyEnvVar];
-    const configKey = cfg.apiKeys?.[p.apiKeyEnvVar];
-    const actionOptions = getActionOptions();
-
-    return (
-      <box flexDirection="column" height={height}>
-        <box paddingX={1} paddingBottom={1}>
-          <text>
-            <span fg={C.cyan}>{p.displayName}</span>
-            {"  "}
-            <span fg={C.dim}>{p.description}</span>
-          </text>
-        </box>
-        {envKey && (
-          <box paddingX={1}>
-            <text>
-              <span fg={C.dim}>Env: </span>
-              <span fg={C.green}>{maskKey(envKey)}</span>
-            </text>
-          </box>
-        )}
-        {configKey && (
-          <box paddingX={1}>
-            <text>
-              <span fg={C.dim}>Config: </span>
-              <span fg={C.green}>{maskKey(configKey)}</span>
-            </text>
-          </box>
-        )}
-        <box paddingX={1} paddingBottom={1}>
-          <text>
-            <span fg={C.dim}>Key URL: </span>
-            <span fg={C.cyan}>{p.keyUrl}</span>
-          </text>
-        </box>
-        <select
-          options={actionOptions}
-          focused={focused}
-          height={Math.max(3, actionOptions.length + 1)}
-          selectedIndex={actionIndex}
-          onSelect={handleActionSelect}
-          onChange={(idx) => setActionIndex(idx)}
-          selectedBackgroundColor={C.bgAlt}
-          selectedTextColor={C.focused}
-        />
-        <box paddingX={1} paddingTop={1}>
-          <text>
-            <span fg={C.dim}>Enter select Esc back</span>
-          </text>
-        </box>
-      </box>
-    );
-  }
-
-  // mode === "input"
-  if (!selectedProvider) return null;
   return (
     <box flexDirection="column" height={height}>
-      <box paddingX={1} paddingBottom={1}>
-        <text>
-          <span fg={C.cyan}>Set API key for {selectedProvider.displayName}</span>
-        </text>
+      {/* Table Header */}
+      <box height={1} paddingX={1}>
+        <text><span fg={C.dim}>    PROVIDER       KEY        SRC   URL</span></text>
       </box>
-      <box paddingX={1} paddingBottom={1}>
-        <text>
-          <span fg={C.dim}>Env var: </span>
-          <span fg={C.yellow}>{selectedProvider.apiKeyEnvVar}</span>
-        </text>
-      </box>
-      <box paddingX={1} paddingBottom={1}>
-        <text>
-          <span fg={C.dim}>Get key at: </span>
-          <span fg={C.cyan}>{selectedProvider.keyUrl}</span>
-        </text>
-      </box>
-      <box paddingX={1} flexDirection="row" gap={1}>
-        <text>
-          <span fg={C.dim}>Key: </span>
-        </text>
-        <input
-          value={inputValue}
-          onChange={setInputValue}
-          placeholder="Paste your API key here..."
-          focused={focused}
-          width={50}
-          backgroundColor={C.bgAlt}
-          textColor={C.text}
-          cursorColor={C.focused}
-          placeholderColor={C.dim}
-        />
-      </box>
-      <box paddingX={1} paddingTop={1}>
-        <text>
-          <span fg={C.dim}>Enter confirm Esc cancel</span>
-        </text>
+      
+      {/* Main List */}
+      <select
+        options={listOptions}
+        focused={focused && mode === "browse"}
+        height={listHeight - 1} // account for header
+        selectedIndex={itemIndex}
+        onSelect={() => { setMode("action"); setActionIndex(0); setStatusMsg(null); }}
+        onChange={(idx) => setItemIndex(idx)}
+        selectedBackgroundColor={C.bgAlt}
+        selectedTextColor={C.cyan}
+      />
+
+      <box height={1}><text><span fg={C.border}>{divider}</span></text></box>
+
+      {/* Sub-pane / Master Detail view */}
+      <box flexDirection="column" height={bottomHeight} paddingX={1}>
+        {mode === "browse" && (
+          <>
+            <text>
+              <strong><span fg={C.cyan}>{selectedProvider.displayName}</span></strong>
+              <span fg={C.dim}>  {selectedProvider.description}</span>
+            </text>
+            <text>
+              <span fg={C.dim}>Keys: </span>
+              <span fg={C.fg}>env={envKeyMask} cfg={cfgKeyMask}  </span>
+              <span fg={C.dim}>Url: </span><span fg={C.cyan}>{pad(activeUrl, 30)}</span>
+              {statusMsg && <span fg={C.green}>  {statusMsg}</span>}
+            </text>
+          </>
+        )}
+
+        {mode === "action" && (
+          <>
+            <text><strong><span fg={C.yellow}>Configure {selectedProvider.displayName}</span></strong></text>
+            <select
+              options={getActionOptions()}
+              focused={focused && mode === "action"}
+              height={bottomHeight - 1}
+              selectedIndex={actionIndex}
+              onSelect={handleActionSelect}
+              onChange={setActionIndex}
+              selectedBackgroundColor={C.dim}
+              selectedTextColor={C.fg}
+            />
+          </>
+        )}
+
+        {(mode === "input_key" || mode === "input_endpoint") && (
+          <box flexDirection="column" gap={1}>
+            <text>
+               <strong><span fg={C.yellow}>Input {mode === "input_key" ? "API Key" : "Custom Endpoint URL"}</span></strong>
+               <span fg={C.dim}> (Enter to save, Esc to cancel)</span>
+            </text>
+            <box flexDirection="row">
+              <text><span fg={C.dim}>&gt; </span></text>
+              <input
+                value={inputValue}
+                onChange={setInputValue}
+                focused={true}
+                width={width - 5}
+                backgroundColor={C.bgAlt}
+                textColor={C.fg}
+              />
+            </box>
+          </box>
+        )}
       </box>
     </box>
   );

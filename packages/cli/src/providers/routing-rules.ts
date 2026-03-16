@@ -47,10 +47,7 @@ function validateRoutingRules(rules: RoutingRules): void {
  * Match a model name against routing rules.
  * Priority: exact → longest glob → "*" catch-all → null (use default chain).
  */
-export function matchRoutingRule(
-  modelName: string,
-  rules: RoutingRules
-): RoutingEntry[] | null {
+export function matchRoutingRule(modelName: string, rules: RoutingRules): RoutingEntry[] | null {
   // 1. Exact match
   if (rules[modelName]) return rules[modelName];
 

@@ -121,9 +121,10 @@ export const PROVIDERS: ProviderDef[] = [
 ];
 
 /**
- * Mask a key for display — show first 6 and last 4 chars
+ * Fixed 8-character visually dense key mask.
  */
-export function maskKey(key: string): string {
-  if (key.length <= 12) return "***";
-  return `${key.slice(0, 6)}...${key.slice(-4)}`;
+export function maskKey(key: string | undefined): string {
+  if (!key) return "────────";
+  if (key.length < 8) return "****    ";
+  return `${key.slice(0, 3)}••${key.slice(-3)}`;
 }

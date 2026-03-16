@@ -85,6 +85,23 @@ export interface TelemetryConsent {
 }
 
 /**
+ * Anonymous usage stats consent state. Persisted to ~/.claudish/config.json
+ * under the "stats" key. Stats are OFF by default — user must explicitly enable.
+ */
+export interface StatsConsent {
+  /** Explicit opt-in. Default: false (disabled until user says yes). */
+  enabled: boolean;
+  /** ISO 8601 UTC of when the user first enabled stats. */
+  enabledAt?: string;
+  /** ISO 8601 UTC of last monthly banner shown. */
+  lastMonthlyPrompt?: string;
+  /** ISO 8601 UTC of last successful batch send. */
+  lastSentAt?: string;
+  /** Claudish version when first prompted. */
+  promptedVersion?: string;
+}
+
+/**
  * Root configuration structure
  */
 export interface ClaudishProfileConfig {
@@ -93,6 +110,8 @@ export interface ClaudishProfileConfig {
   profiles: Record<string, Profile>;
   /** Telemetry consent state. Absent = never prompted. */
   telemetry?: TelemetryConsent;
+  /** Anonymous usage stats consent state. Absent = never configured (defaults to disabled). */
+  stats?: StatsConsent;
   /**
    * Custom routing rules. Local .claudish.json rules replace global rules entirely.
    * Maps model name patterns (exact, glob, or "*") to ordered lists of routing entries.
@@ -156,6 +175,10 @@ export function loadConfig(): ClaudishProfileConfig {
     // Preserve telemetry consent state if present
     if (config.telemetry !== undefined) {
       merged.telemetry = config.telemetry;
+    }
+    // Preserve stats consent state if present
+    if (config.stats !== undefined) {
+      merged.stats = config.stats;
     }
     // Preserve custom routing rules if present
     if (config.routing !== undefined) {

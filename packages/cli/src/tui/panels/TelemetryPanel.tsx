@@ -1,144 +1,80 @@
 import type { SelectOption } from "@opentui/core";
 /** @jsxImportSource @opentui/react */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { loadConfig, saveConfig } from "../../profile-config.js";
-
-const C = {
-  green: "#9ece6a",
-  yellow: "#e0af68",
-  dim: "#565f89",
-  bgAlt: "#24283b",
-  focused: "#7aa2f7",
-};
+import { C } from "../theme.js";
 
 interface TelemetryPanelProps {
   focused: boolean;
   height: number;
+  onEditingChange?: (editing: boolean) => void;
 }
 
-function setTelemetryEnabled(enabled: boolean): string {
-  const cfg = loadConfig();
-  cfg.telemetry = {
-    ...(cfg.telemetry ?? {}),
-    enabled,
-    askedAt: cfg.telemetry?.askedAt ?? new Date().toISOString(),
-  };
-  saveConfig(cfg);
-  return enabled
-    ? "Telemetry enabled. Anonymous error reports will be sent."
-    : "Telemetry disabled. No error reports will be sent.";
-}
-
-function resetTelemetryConsent(): string {
-  const cfg = loadConfig();
-  if (!cfg.telemetry) return "No telemetry consent to reset.";
-  cfg.telemetry.askedAt = undefined;
-  cfg.telemetry.enabled = false;
-  saveConfig(cfg);
-  return "Telemetry consent reset. You will be prompted on the next error.";
-}
-
-export function TelemetryPanel({ focused, height }: TelemetryPanelProps) {
-  const [actionIndex, setActionIndex] = useState(0);
+export function TelemetryPanel({ focused, height, onEditingChange }: TelemetryPanelProps) {
+  const [config, setConfig] = useState(() => loadConfig());
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  const config = loadConfig();
-  const telemetry = config.telemetry;
-  const envOverride = process.env.CLAUDISH_TELEMETRY;
-  const envDisabled = envOverride === "0" || envOverride === "false" || envOverride === "off";
-  const isEnabled = !envDisabled && telemetry?.enabled === true;
+  // Unused layout prop for this simple menu, ensures generic UI compatibility
+  useEffect(() => onEditingChange?.(false), [onEditingChange]);
 
-  const actionOptions = [
-    {
-      name: isEnabled ? "Disable telemetry" : "Enable telemetry",
-      description: isEnabled
-        ? "Stop sending anonymous error reports"
-        : "Opt in to anonymous error reporting",
-      value: isEnabled ? "off" : "on",
-    },
-    {
-      name: "Reset consent",
-      description: "Will prompt again on next error",
-      value: "reset",
-    },
-  ];
+  const telemetry = config.telemetry;
+  const envDisabled = process.env.CLAUDISH_TELEMETRY === "0" || process.env.CLAUDISH_TELEMETRY === "false";
+  const isEnabled = !envDisabled && telemetry?.enabled === true;
 
   const handleSelect = useCallback((_idx: number, opt: SelectOption | null) => {
     if (!opt?.value) return;
-    if (opt.value === "on") {
-      setStatusMsg(setTelemetryEnabled(true));
-    } else if (opt.value === "off") {
-      setStatusMsg(setTelemetryEnabled(false));
+    const cfg = loadConfig();
+    
+    if (opt.value === "toggle") {
+      const next = !isEnabled;
+      cfg.telemetry = { ...(cfg.telemetry ?? {}), enabled: next, askedAt: cfg.telemetry?.askedAt ?? new Date().toISOString() };
+      saveConfig(cfg);
+      setStatusMsg(next ? "✓ Telemetry enabled." : "✓ Telemetry disabled.");
     } else if (opt.value === "reset") {
-      setStatusMsg(resetTelemetryConsent());
+      if (cfg.telemetry) {
+        cfg.telemetry.askedAt = undefined;
+        cfg.telemetry.enabled = false;
+        saveConfig(cfg);
+      }
+      setStatusMsg("✓ Consent reset. You will be prompted on the next error.");
     }
-  }, []);
+    setConfig(loadConfig());
+  }, [isEnabled]);
+
+  const toggleText = `[${isEnabled ? "x" : " "}] Expand error reporting pipeline`;
 
   return (
-    <box flexDirection="column" height={height} padding={1} gap={1}>
-      <text>
-        <span fg={C.dim}>Status: </span>
-        {envDisabled ? (
-          <span fg={C.yellow}>DISABLED (CLAUDISH_TELEMETRY env var override)</span>
-        ) : !telemetry ? (
-          <span fg={C.dim}>not configured (disabled until you opt in)</span>
-        ) : telemetry.enabled ? (
-          <span fg={C.green}>ENABLED</span>
-        ) : (
-          <span fg={C.yellow}>DISABLED</span>
-        )}
-      </text>
-
-      {telemetry?.askedAt && (
-        <text>
-          <span fg={C.dim}>Configured: {telemetry.askedAt}</span>
-        </text>
-      )}
-
-      <box paddingTop={1} flexDirection="column">
-        <text>
-          <span fg={C.dim}>When enabled, anonymous error reports include:</span>
-        </text>
-        <text>
-          <span fg={C.dim}> - Claudish version, error type, provider name, model ID</span>
-        </text>
-        <text>
-          <span fg={C.dim}> - Platform, runtime, install method</span>
-        </text>
-        <text>
-          <span fg={C.dim}> - Sanitized error message (no paths, no credentials)</span>
-        </text>
-        <text>
-          <span fg={C.dim}> - Ephemeral session ID (not stored, not correlatable)</span>
-        </text>
-      </box>
-
-      <box paddingBottom={1}>
-        <text>
-          <span fg={C.dim}>
-            Never collected: prompt content, AI responses, API keys, file paths.
-          </span>
-        </text>
-      </box>
-
+    <box flexDirection="column" height={height}>
       <select
-        options={actionOptions}
+        options={[
+          { name: toggleText, value: "toggle" },
+          { name: " [-] Reset Prompts/Consent", value: "reset" }
+        ]}
         focused={focused}
-        height={Math.max(3, actionOptions.length + 1)}
-        selectedIndex={actionIndex}
+        height={3}
         onSelect={handleSelect}
-        onChange={(idx) => setActionIndex(idx)}
         selectedBackgroundColor={C.bgAlt}
-        selectedTextColor={C.focused}
+        selectedTextColor={C.cyan}
       />
-
-      {statusMsg && (
-        <box paddingTop={1}>
-          <text>
-            <span fg={C.green}>{statusMsg}</span>
-          </text>
-        </box>
-      )}
+      <box height={1}><text><span fg={C.border}>{"─".repeat(50)}</span></text></box>
+      <box flexDirection="column" paddingX={1} gap={0}>
+        <text>
+          <span fg={C.dim}>Status: </span>
+          {envDisabled ? <span fg={C.yellow}>DISABLED (Env override)</span> 
+           : !telemetry ? <span fg={C.dim}>Not configured yet</span>
+           : telemetry.enabled ? <span fg={C.green}>ENABLED</span>
+           : <span fg={C.yellow}>DISABLED</span>}
+        </text>
+        <text><span fg={C.dim}>Last Prompt: {telemetry?.askedAt || "Never"}</span></text>
+        <text><span fg={C.dim}> </span></text>
+        <text><strong><span fg={C.cyan}>Anonymous Payloads ONLY include:</span></strong></text>
+        <text><span fg={C.dim}>- Claudish release architecture & platform execution targets</span></text>
+        <text><span fg={C.dim}>- Sanitized message failures (No env vars, no paths)</span></text>
+        <text><span fg={C.dim}>- Isolated stack execution points</span></text>
+        <text><span fg={C.dim}> </span></text>
+        <text><span fg={C.dim}>NEVER collected: Auth strings, keys, project paths, prompt body.</span></text>
+        {statusMsg && <text><span fg={C.green}>{statusMsg}</span></text>}
+      </box>
     </box>
   );
 }
