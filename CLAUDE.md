@@ -80,19 +80,113 @@ Claudish supports local models via:
 
 Local model APIs (LM Studio, Ollama) report `prompt_tokens` as the **full conversation context** each request, not incremental tokens. The `writeTokenFile` function uses assignment (`=`) not accumulation (`+=`) for input tokens to handle this correctly.
 
-## Two-Layer Adapter Architecture
+## Three-Layer Adapter Architecture (v5.14.0+)
 
-ComposedHandler maintains two adapter layers:
-- **Provider adapter** (explicit): LiteLLMAdapter, OpenRouterAdapter — handles transport format (messages, tools, payload)
-- **Model adapter** (via AdapterManager): GLMAdapter, GrokAdapter — handles model quirks (context window, vision, prepareRequest)
+The translation pipeline has three decoupled layers:
 
-Model adapter overrides provider adapter for: `getContextWindow()`, `supportsVision()`, `prepareRequest()`.
-When adding new model support, create a model adapter — don't embed model knowledge in provider adapters.
+### Layer 1: FormatConverter — wire format translation
+Translates between Claude API format and target model's wire format (messages, tools, payload).
+Each converter declares its stream format via `getStreamFormat()`.
+- **Interface**: `adapters/format-converter.ts`
+- **Implementations**: OpenAIAdapter, AnthropicPassthroughAdapter, GeminiAdapter, CodexAdapter, OllamaCloudAdapter, LiteLLMAdapter
+- **Message/tool conversion**: `handlers/shared/format/openai-messages.ts`, `openai-tools.ts`
+
+### Layer 2: ModelTranslator — model dialect translation
+Translates model-specific dialect differences (context windows, thinking→reasoning_effort, vision rules).
+- **Interface**: `adapters/model-translator.ts`
+- **Implementations**: GLMAdapter, GrokAdapter, MiniMaxAdapter, DeepSeekAdapter, QwenAdapter, CodexAdapter
+- **Selection**: `AdapterManager` auto-selects based on model ID
+
+### Layer 3: ProviderTransport — HTTP transport
+Handles auth, endpoints, headers, rate limiting. Optionally overrides stream format for aggregators.
+- **Interface**: `providers/transport/types.ts`
+- **Stream format override**: LiteLLM and OpenRouter implement `overrideStreamFormat()` → `"openai-sse"`
+
+### Composition in ComposedHandler
+```
+ComposedHandler = FormatConverter (explicit adapter) + ModelTranslator (auto-selected) + ProviderTransport
+```
+
+**Stream parser selection** (3-tier priority):
+```typescript
+transport.overrideStreamFormat() ?? modelAdapter.getStreamFormat() ?? providerAdapter.getStreamFormat()
+```
+
+**Adding a new provider**: Add one entry to `PROVIDER_PROFILES` table in `providers/provider-profiles.ts`.
+**Adding a new model**: Create a ModelTranslator adapter, register in `adapters/adapter-manager.ts`.
+**Verifying wiring**: `claudish --probe <model>` shows the full adapter composition.
+
+### Stream Parsers
+Located in `handlers/shared/stream-parsers/`:
+- `openai-sse.ts` — OpenAI SSE → Claude SSE (used by most providers)
+- `anthropic-sse.ts` — Anthropic SSE passthrough (MiniMax, Kimi direct)
+- `gemini-sse.ts` — Gemini SSE → Claude SSE
+- `ollama-jsonl.ts` — Ollama JSONL → Claude SSE
+- `openai-responses-sse.ts` — OpenAI Responses API → Claude SSE (Codex)
 
 ## Debug Logging
 
 Debug logging is behind the `--debug` flag and outputs to `logs/` directory. It's disabled by default.
 Keep full debug logging (including empty chunks, raw deltas) in log files — needed to understand real model streaming behavior. Suppress noise at the registration/initialization level (e.g., conditional middleware), not at the streaming data level.
+
+### Raw SSE Capture (v5.14.0+)
+
+When `--debug` is active, both stream parsers log raw SSE events:
+- `[SSE:openai] {...}` — every OpenAI SSE data line
+- `[SSE:anthropic] {...}` — every Anthropic SSE data line
+
+These are greppable and extractable into test fixtures for regression testing.
+
+## Debugging Failed Model Translations
+
+When a model produces wrong output (0 bytes, garbled, wrong format), use this workflow:
+
+### 1. Reproduce with --debug
+```bash
+claudish --model minimax-m2.5 --debug "say hello"
+# Debug log written to logs/claudish_YYYY-MM-DD_HH-MM-SS.log
+```
+
+### 2. Verify wiring with --probe
+```bash
+claudish --probe minimax-m2.5
+# Shows: transport, format adapter, model translator, stream format, overrides
+```
+
+### 3. Analyze the debug log
+Use the `/debug-logs` slash command in Claude Code:
+```
+/debug-logs logs/claudish_2026-03-17_09-41-32.log
+```
+
+This command:
+1. Reads the log and counts text chunks, tool calls, HTTP errors, fallback chains
+2. Diagnoses the failure mode (no SSE content, text but 0 stdout, wrong parser, etc.)
+3. Extracts SSE fixtures from `[SSE:*]` lines using `test-fixtures/extract-sse-from-log.ts`
+4. Adds a regression test to `format-translation.test.ts`
+5. Runs tests to confirm the regression is captured
+
+### 4. Extract fixtures manually (alternative)
+```bash
+bun run packages/cli/src/test-fixtures/extract-sse-from-log.ts logs/claudish_*.log
+# Creates: test-fixtures/sse-responses/<model>-<format>-turn<N>.sse
+```
+
+### 5. Run format translation tests
+```bash
+bun test packages/cli/src/format-translation.test.ts
+```
+
+## Test Infrastructure
+
+### Format Translation Test Harness
+`packages/cli/src/format-translation.test.ts` — SSE replay tests for the full translation pipeline.
+
+**Fixture-based**: Each `.sse` file in `test-fixtures/sse-responses/` is a captured SSE stream from a real provider response. Tests replay fixtures through the stream parser and assert correct Claude SSE output.
+
+**Helpers**: `parseClaudeSseStream()`, `extractText()`, `extractToolNames()`, `extractStopReason()`, `fixtureToResponse()`
+
+**Adding regression tests**: After extracting fixtures from a debug log, add a `describe("Regression: <model>")` block. Template is at the bottom of the test file.
 
 ## Version Bumping Checklist
 
