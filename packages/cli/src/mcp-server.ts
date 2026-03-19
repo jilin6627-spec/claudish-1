@@ -15,6 +15,13 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import {
+  setupSession,
+  runModels,
+  judgeResponses,
+  getStatus,
+  validateSessionPath,
+} from "./team-orchestrator.js";
 
 // Load environment variables
 config();
@@ -159,7 +166,7 @@ async function runPrompt(
     body: JSON.stringify({
       model,
       messages,
-      max_tokens: maxTokens || 4096,
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
     }),
   });
 
@@ -220,7 +227,7 @@ async function main() {
         .describe("OpenRouter model ID (e.g., 'x-ai/grok-code-fast-1', 'openai/gpt-5.1-codex')"),
       prompt: z.string().describe("The prompt to send to the model"),
       system_prompt: z.string().optional().describe("Optional system prompt"),
-      max_tokens: z.number().optional().describe("Maximum tokens in response (default: 4096)"),
+      max_tokens: z.number().optional().describe("Maximum tokens in response (omit to let model decide)"),
     },
     async ({ model, prompt, system_prompt, max_tokens }) => {
       try {
@@ -351,8 +358,9 @@ async function main() {
       models: z.array(z.string()).describe("List of model IDs to compare"),
       prompt: z.string().describe("The prompt to send to all models"),
       system_prompt: z.string().optional().describe("Optional system prompt"),
+      max_tokens: z.number().optional().describe("Maximum tokens in response (omit to let model decide)"),
     },
-    async ({ models, prompt, system_prompt }) => {
+    async ({ models, prompt, system_prompt, max_tokens }) => {
       const results: Array<{
         model: string;
         response: string;
@@ -362,7 +370,7 @@ async function main() {
 
       for (const model of models) {
         try {
-          const result = await runPrompt(model, prompt, system_prompt, 2048);
+          const result = await runPrompt(model, prompt, system_prompt, max_tokens);
           results.push({
             model,
             response: result.content,
@@ -394,6 +402,140 @@ async function main() {
       }
 
       return { content: [{ type: "text", text: output }] };
+    }
+  );
+
+  // Tool: team_run - Run multiple models on a task in parallel
+  server.tool(
+    "team_run",
+    "Run multiple AI models on a task and produce anonymized outputs in a session directory",
+    {
+      path: z.string().describe("Session directory path (must be within current working directory)"),
+      models: z
+        .array(z.string())
+        .describe("Model IDs to run (e.g., ['minimax-m2.5', 'kimi-k2.5'])"),
+      input: z
+        .string()
+        .optional()
+        .describe("Task prompt text (or place input.md in the session directory before calling)"),
+      timeout: z.number().optional().describe("Per-model timeout in seconds (default: 300)"),
+    },
+    async ({ path, models, input, timeout }) => {
+      try {
+        const resolved = validateSessionPath(path);
+        setupSession(resolved, models, input);
+        const status = await runModels(resolved, { timeout });
+        return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool: team_judge - Blind-judge existing anonymized model outputs
+  server.tool(
+    "team_judge",
+    "Blind-judge existing anonymized model outputs in a session directory",
+    {
+      path: z
+        .string()
+        .describe(
+          "Session directory containing response-*.md files (must be within current working directory)"
+        ),
+      judges: z
+        .array(z.string())
+        .optional()
+        .describe("Model IDs to use as judges (default: same models that produced the responses)"),
+    },
+    async ({ path, judges }) => {
+      try {
+        const resolved = validateSessionPath(path);
+        const verdict = await judgeResponses(resolved, { judges });
+        return { content: [{ type: "text", text: JSON.stringify(verdict, null, 2) }] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool: team_run_and_judge - Full pipeline: run models then blind-judge their outputs
+  server.tool(
+    "team_run_and_judge",
+    "Run multiple AI models on a task, then blind-judge their outputs — full pipeline",
+    {
+      path: z.string().describe("Session directory path (must be within current working directory)"),
+      models: z.array(z.string()).describe("Model IDs to run"),
+      judges: z
+        .array(z.string())
+        .optional()
+        .describe("Model IDs to use as judges (default: same as runners)"),
+      input: z.string().optional().describe("Task prompt text"),
+      timeout: z.number().optional().describe("Per-model timeout in seconds (default: 300)"),
+    },
+    async ({ path, models, judges, input, timeout }) => {
+      try {
+        const resolved = validateSessionPath(path);
+        setupSession(resolved, models, input);
+        await runModels(resolved, { timeout });
+        const verdict = await judgeResponses(resolved, { judges });
+        return { content: [{ type: "text", text: JSON.stringify(verdict, null, 2) }] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool: team_status - Check execution status of a team session
+  server.tool(
+    "team_status",
+    "Check the execution status of a team orchestrator session",
+    {
+      path: z
+        .string()
+        .describe(
+          "Session directory path (must be within current working directory)"
+        ),
+    },
+    async ({ path }) => {
+      try {
+        const resolved = validateSessionPath(path);
+        const status = getStatus(resolved);
+        return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
     }
   );
 

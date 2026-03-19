@@ -1,0 +1,530 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  readdirSync,
+  statSync,
+  createWriteStream,
+} from "node:fs";
+import { join, resolve } from "node:path";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface TeamManifest {
+  created: string;
+  models: Record<string, { model: string; assignedAt: string }>;
+  shuffleOrder: string[];
+}
+
+export interface ModelStatus {
+  state: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "TIMEOUT";
+  exitCode: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  outputSize: number;
+}
+
+export interface TeamStatus {
+  startedAt: string;
+  models: Record<string, ModelStatus>;
+}
+
+export interface TeamRunOptions {
+  timeout?: number; // seconds, default 300
+  claudeFlags?: string[]; // extra flags passed to child claudish
+  onStatusChange?: (id: string, status: ModelStatus) => void;
+}
+
+export interface TeamJudgeOptions {
+  judges?: string[]; // models to use as judges (default: same models as runners)
+  claudeFlags?: string[];
+}
+
+export interface VoteResult {
+  judgeId: string;
+  responseId: string;
+  verdict: "APPROVE" | "REJECT" | "ABSTAIN";
+  confidence: number;
+  summary: string;
+  keyIssues: string[];
+}
+
+export interface TeamVerdict {
+  responses: Record<
+    string,
+    {
+      approvals: number;
+      rejections: number;
+      abstentions: number;
+      score: number; // approvals / (approvals + rejections)
+    }
+  >;
+  ranking: string[]; // response IDs sorted by score descending
+  votes: VoteResult[];
+}
+
+// ─── Path Validation ──────────────────────────────────────────────────────────
+
+/**
+ * Validate that sessionPath is within cwd (prevents path traversal in MCP tools).
+ * Returns the resolved absolute path.
+ */
+export function validateSessionPath(sessionPath: string): string {
+  const resolved = resolve(sessionPath);
+  const cwd = process.cwd();
+  if (!resolved.startsWith(cwd + "/") && resolved !== cwd) {
+    throw new Error(`Session path must be within current directory: ${sessionPath}`);
+  }
+  return resolved;
+}
+
+// ─── Core Functions ───────────────────────────────────────────────────────────
+
+/**
+ * Setup a new team session.
+ * Creates directory structure, writes input.md, generates a shuffled manifest.
+ */
+export function setupSession(
+  sessionPath: string,
+  models: string[],
+  input?: string
+): TeamManifest {
+  if (models.length === 0) {
+    throw new Error("At least one model is required");
+  }
+
+  // Create directories
+  mkdirSync(join(sessionPath, "work"), { recursive: true });
+  mkdirSync(join(sessionPath, "errors"), { recursive: true });
+
+  // Write input.md if provided, otherwise require it to already exist
+  if (input !== undefined) {
+    writeFileSync(join(sessionPath, "input.md"), input, "utf-8");
+  } else if (!existsSync(join(sessionPath, "input.md"))) {
+    throw new Error(`No input.md found at ${sessionPath} and no input provided`);
+  }
+
+  // Generate zero-padded numeric IDs to support >26 models: 01, 02, ..., 99
+  const ids = models.map((_, i) => String(i + 1).padStart(2, "0"));
+  const shuffled = fisherYatesShuffle([...ids]);
+
+  // Build manifest — shuffled[i] is the anonymous ID for models[i]
+  const now = new Date().toISOString();
+  const manifest: TeamManifest = {
+    created: now,
+    models: {},
+    shuffleOrder: shuffled,
+  };
+
+  for (let i = 0; i < models.length; i++) {
+    const anonId = shuffled[i];
+    manifest.models[anonId] = {
+      model: models[i],
+      assignedAt: now,
+    };
+    mkdirSync(join(sessionPath, "work", anonId), { recursive: true });
+  }
+
+  writeFileSync(join(sessionPath, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+
+  // Initialize status.json with all models in PENDING state
+  const status: TeamStatus = {
+    startedAt: now,
+    models: Object.fromEntries(
+      Object.keys(manifest.models).map((id) => [
+        id,
+        {
+          state: "PENDING" as const,
+          exitCode: null,
+          startedAt: null,
+          completedAt: null,
+          outputSize: 0,
+        },
+      ])
+    ),
+  };
+  writeFileSync(join(sessionPath, "status.json"), JSON.stringify(status, null, 2), "utf-8");
+
+  return manifest;
+}
+
+/**
+ * Run all models in parallel.
+ * Each model reads input.md and writes response-{ID}.md.
+ * Returns when all models complete or timeout.
+ */
+export async function runModels(
+  sessionPath: string,
+  opts: TeamRunOptions = {}
+): Promise<TeamStatus> {
+  const timeoutMs = (opts.timeout ?? 300) * 1000;
+  const manifest: TeamManifest = JSON.parse(
+    readFileSync(join(sessionPath, "manifest.json"), "utf-8")
+  );
+  const statusPath = join(sessionPath, "status.json");
+
+  const inputPath = join(sessionPath, "input.md");
+  const inputContent = readFileSync(inputPath, "utf-8");
+
+  // In-memory status cache to eliminate read-modify-write races
+  const statusCache: TeamStatus = JSON.parse(readFileSync(statusPath, "utf-8"));
+
+  function updateModelStatus(id: string, update: Partial<ModelStatus>): void {
+    statusCache.models[id] = { ...statusCache.models[id], ...update };
+    writeFileSync(statusPath, JSON.stringify(statusCache, null, 2), "utf-8");
+  }
+
+  const processes: Map<string, ChildProcess> = new Map();
+
+  // SIGINT handler: kill all child processes on Ctrl+C
+  const sigintHandler = () => {
+    for (const [, proc] of processes) {
+      if (!proc.killed) proc.kill("SIGTERM");
+    }
+    process.exit(1);
+  };
+  process.on("SIGINT", sigintHandler);
+
+  const completionPromises: Promise<void>[] = [];
+
+  for (const [anonId, entry] of Object.entries(manifest.models)) {
+    const outputPath = join(sessionPath, `response-${anonId}.md`);
+    const errorLogPath = join(sessionPath, "errors", `${anonId}.log`);
+    const workDir = join(sessionPath, "work", anonId);
+
+    // CRITICAL FIX: do NOT use -p flag (-p means --profile in claudish)
+    // --stdin triggers non-interactive single-shot mode
+    const args = [
+      "--model",
+      entry.model,
+      "-y",
+      "--stdin",
+      "--quiet",
+      ...(opts.claudeFlags ?? []),
+    ];
+
+    updateModelStatus(anonId, {
+      state: "RUNNING",
+      startedAt: new Date().toISOString(),
+    });
+
+    const proc = spawn("claudish", args, {
+      cwd: workDir,
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: false,
+    });
+
+    // Stream stdout to disk via pipe — no memory buffering
+    const outputStream = createWriteStream(outputPath);
+    proc.stdout?.pipe(outputStream);
+
+    // Collect stderr for error logging
+    let stderr = "";
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    // Pipe input to stdin
+    proc.stdin?.write(inputContent);
+    proc.stdin?.end();
+
+    const completionPromise = new Promise<void>((resolve) => {
+      let exitCode: number | null = null;
+      let resolved = false;
+
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+
+        let outputSize = 0;
+        try {
+          outputSize = statSync(outputPath).size;
+        } catch {
+          // file may not exist if process produced no output
+        }
+
+        updateModelStatus(anonId, {
+          state: exitCode === 0 ? "COMPLETED" : "FAILED",
+          exitCode: exitCode ?? 1,
+          completedAt: new Date().toISOString(),
+          outputSize,
+        });
+
+        opts.onStatusChange?.(anonId, statusCache.models[anonId]);
+        resolve();
+      };
+
+      // "close" always fires after the stream ends or errors — single resolution point
+      outputStream.on("close", finish);
+
+      proc.on("exit", (code) => {
+        // CRITICAL FIX: guard against overwriting TIMEOUT state
+        const current = statusCache.models[anonId];
+        if (current?.state === "TIMEOUT") {
+          resolved = true;
+          resolve();
+          return;
+        }
+
+        if (stderr) {
+          writeFileSync(errorLogPath, stderr, "utf-8");
+        }
+
+        exitCode = code;
+        // If the stream already closed before exit fired, finish immediately
+        if (outputStream.destroyed) {
+          finish();
+        }
+        // Otherwise wait for outputStream "close" to call finish()
+      });
+    });
+
+    processes.set(anonId, proc);
+    completionPromises.push(completionPromise);
+  }
+
+  // Wait for all processes, or until timeout fires
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+  await Promise.race([
+    Promise.all(completionPromises),
+    new Promise<void>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        for (const [id, proc] of processes) {
+          if (!proc.killed) {
+            proc.kill("SIGTERM");
+            // Mark as TIMEOUT — exit handler will see this and skip overwrite
+            updateModelStatus(id, {
+              state: "TIMEOUT",
+              completedAt: new Date().toISOString(),
+            });
+            opts.onStatusChange?.(id, statusCache.models[id]);
+          }
+        }
+        resolve();
+      }, timeoutMs);
+    }),
+  ]);
+
+  if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+
+  // Remove SIGINT handler after we're done
+  process.off("SIGINT", sigintHandler);
+
+  return statusCache;
+}
+
+/**
+ * Judge existing responses blindly.
+ * Reads response-*.md files, sends to judge models, collects votes, aggregates verdict.
+ */
+export async function judgeResponses(
+  sessionPath: string,
+  opts: TeamJudgeOptions = {}
+): Promise<TeamVerdict> {
+  // Collect all response files in sorted order
+  const responseFiles = readdirSync(sessionPath)
+    .filter((f) => f.startsWith("response-") && f.endsWith(".md"))
+    .sort();
+
+  if (responseFiles.length < 2) {
+    throw new Error(`Need at least 2 responses to judge, found ${responseFiles.length}`);
+  }
+
+  const responses: Record<string, string> = {};
+  for (const file of responseFiles) {
+    const id = file.replace(/^response-/, "").replace(/\.md$/, "");
+    responses[id] = readFileSync(join(sessionPath, file), "utf-8");
+  }
+
+  // Build and save judge prompt
+  const input = readFileSync(join(sessionPath, "input.md"), "utf-8");
+  const judgePrompt = buildJudgePrompt(input, responses);
+  writeFileSync(join(sessionPath, "judge-prompt.md"), judgePrompt, "utf-8");
+
+  // Determine judge models (default: same models that produced responses)
+  const judgeModels = opts.judges ?? getDefaultJudgeModels(sessionPath);
+
+  // Run judges in a sub-session under sessionPath/judging/
+  const judgePath = join(sessionPath, "judging");
+  mkdirSync(judgePath, { recursive: true });
+
+  setupSession(judgePath, judgeModels, judgePrompt);
+  await runModels(judgePath, { claudeFlags: opts.claudeFlags });
+
+  // Parse votes from judge outputs
+  const votes = parseJudgeVotes(judgePath, Object.keys(responses));
+
+  // Aggregate votes into a verdict
+  const verdict = aggregateVerdict(votes, Object.keys(responses));
+
+  // Write verdict.md (reveals model names since judging is complete)
+  writeFileSync(join(sessionPath, "verdict.md"), formatVerdict(verdict, sessionPath), "utf-8");
+
+  return verdict;
+}
+
+/**
+ * Get current status of a team session.
+ */
+export function getStatus(sessionPath: string): TeamStatus {
+  return JSON.parse(readFileSync(join(sessionPath, "status.json"), "utf-8"));
+}
+
+// ─── Internal Helpers ─────────────────────────────────────────────────────────
+
+function fisherYatesShuffle<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function getDefaultJudgeModels(sessionPath: string): string[] {
+  const manifest: TeamManifest = JSON.parse(
+    readFileSync(join(sessionPath, "manifest.json"), "utf-8")
+  );
+  return Object.values(manifest.models).map((e) => e.model);
+}
+
+function buildJudgePrompt(input: string, responses: Record<string, string>): string {
+  const ids = Object.keys(responses).sort();
+  let prompt = "## Blind Evaluation Task\n\n";
+  prompt += "### Original Task\n\n";
+  prompt += input + "\n\n";
+  prompt += "---\n\n";
+  prompt += "### Responses to Evaluate\n\n";
+  prompt +=
+    "Evaluate each response independently. You do not know which model produced which response.\n\n";
+
+  for (const id of ids) {
+    prompt += `#### Response ${id}\n\n`;
+    prompt += responses[id] + "\n\n";
+    prompt += "---\n\n";
+  }
+
+  prompt += "### Your Assignment\n\n";
+  prompt += `For EACH of the ${ids.length} responses above, provide a vote block in this exact format:\n\n`;
+  prompt += "```vote\n";
+  prompt += "RESPONSE: [ID]\n";
+  prompt += "VERDICT: [APPROVE|REJECT|ABSTAIN]\n";
+  prompt += "CONFIDENCE: [1-10]\n";
+  prompt += "SUMMARY: [One sentence]\n";
+  prompt += "KEY_ISSUES: [Comma-separated issues, or None]\n";
+  prompt += "```\n\n";
+  prompt += `Provide exactly ${ids.length} vote blocks, one per response. Be decisive and analytical.\n`;
+
+  return prompt;
+}
+
+function parseJudgeVotes(judgePath: string, responseIds: string[]): VoteResult[] {
+  const votes: VoteResult[] = [];
+  const responseFiles = readdirSync(judgePath)
+    .filter((f) => f.startsWith("response-") && f.endsWith(".md"))
+    .sort();
+
+  for (const file of responseFiles) {
+    const judgeId = file.replace(/^response-/, "").replace(/\.md$/, "");
+    let content: string;
+    try {
+      content = readFileSync(join(judgePath, file), "utf-8");
+    } catch {
+      continue;
+    }
+
+    // Parse ```vote ... ``` blocks
+    const votePattern = /```vote\s*\n([\s\S]*?)\n\s*```/g;
+    let match: RegExpExecArray | null;
+    while ((match = votePattern.exec(content)) !== null) {
+      const block = match[1];
+      const responseMatch = block.match(/RESPONSE:\s*(\S+)/);
+      const verdictMatch = block.match(/VERDICT:\s*(APPROVE|REJECT|ABSTAIN)/);
+      const confidenceMatch = block.match(/CONFIDENCE:\s*(\d+)/);
+      const summaryMatch = block.match(/SUMMARY:\s*(.+)/);
+      const keyIssuesMatch = block.match(/KEY_ISSUES:\s*(.+)/);
+
+      const responseId = responseMatch?.[1];
+      const verdict = verdictMatch?.[1];
+
+      if (!responseId || !verdict) continue;
+      // Only record votes for IDs we expect
+      if (!responseIds.includes(responseId)) continue;
+
+      votes.push({
+        judgeId,
+        responseId,
+        verdict: verdict as "APPROVE" | "REJECT" | "ABSTAIN",
+        confidence: parseInt(confidenceMatch?.[1] ?? "5", 10),
+        summary: summaryMatch?.[1]?.trim() ?? "",
+        keyIssues:
+          keyIssuesMatch?.[1]
+            ?.split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.toLowerCase() !== "none" && s.length > 0) ?? [],
+      });
+    }
+  }
+
+  return votes;
+}
+
+function aggregateVerdict(votes: VoteResult[], responseIds: string[]): TeamVerdict {
+  const responses: TeamVerdict["responses"] = {};
+
+  for (const id of responseIds) {
+    const votesForResponse = votes.filter((v) => v.responseId === id);
+    const approvals = votesForResponse.filter((v) => v.verdict === "APPROVE").length;
+    const rejections = votesForResponse.filter((v) => v.verdict === "REJECT").length;
+    const abstentions = votesForResponse.filter((v) => v.verdict === "ABSTAIN").length;
+    const total = approvals + rejections;
+
+    responses[id] = {
+      approvals,
+      rejections,
+      abstentions,
+      score: total > 0 ? approvals / total : 0,
+    };
+  }
+
+  const ranking = Object.entries(responses)
+    .sort(([, a], [, b]) => b.score - a.score)
+    .map(([id]) => id);
+
+  return { responses, ranking, votes };
+}
+
+function formatVerdict(verdict: TeamVerdict, sessionPath: string): string {
+  let manifest: TeamManifest | null = null;
+  try {
+    manifest = JSON.parse(readFileSync(join(sessionPath, "manifest.json"), "utf-8"));
+  } catch {
+    // If manifest is missing we just won't show model names
+  }
+
+  let output = "# Team Verdict\n\n";
+  output += "## Ranking\n\n";
+  output +=
+    "| Rank | Response | Model | Score | Approvals | Rejections | Abstentions |\n";
+  output +=
+    "|------|----------|-------|-------|-----------|------------|-------------|\n";
+
+  for (let i = 0; i < verdict.ranking.length; i++) {
+    const id = verdict.ranking[i];
+    const r = verdict.responses[id];
+    const modelName = manifest?.models[id]?.model ?? "unknown";
+    const scoreStr = `${(r.score * 100).toFixed(0)}%`;
+    output += `| ${i + 1} | ${id} | ${modelName} | ${scoreStr} | ${r.approvals} | ${r.rejections} | ${r.abstentions} |\n`;
+  }
+
+  output += "\n## Individual Votes\n\n";
+  for (const vote of verdict.votes) {
+    const issueStr =
+      vote.keyIssues.length > 0 ? ` Issues: ${vote.keyIssues.join(", ")}.` : "";
+    output += `- **Judge ${vote.judgeId}** -> Response ${vote.responseId}: **${vote.verdict}** (${vote.confidence}/10) — ${vote.summary}${issueStr}\n`;
+  }
+
+  return output;
+}
