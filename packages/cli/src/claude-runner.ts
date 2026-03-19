@@ -5,6 +5,17 @@ import { tmpdir, homedir } from "node:os";
 import { join, basename } from "node:path";
 import { ENV } from "./config.js";
 import type { ClaudishConfig } from "./types.js";
+import { parseModelSpec } from "./providers/model-parser.js";
+
+/**
+ * Check if any resolved model mapping targets a native Anthropic model (claude-*).
+ * When true, placeholder auth tokens must NOT be set — Claude Code needs its real
+ * subscription credentials so NativeHandler can forward them to api.anthropic.com.
+ */
+function hasNativeAnthropicMapping(config: ClaudishConfig): boolean {
+  const models = [config.model, config.modelOpus, config.modelSonnet, config.modelHaiku, config.modelSubagent];
+  return models.some(m => m && parseModelSpec(m).provider === "native-anthropic");
+}
 
 // Use process.platform directly to ensure runtime evaluation
 // (module-level constants can be inlined by bundlers at build time)
@@ -340,16 +351,21 @@ export async function runClaudeWithProxy(
       env[ENV.ANTHROPIC_MODEL] = modelId;
       env[ENV.ANTHROPIC_SMALL_FAST_MODEL] = modelId;
     }
-    // OpenRouter mode: Use placeholder to prevent Claude Code dialog
-    // The proxy will handle authentication with OPENROUTER_API_KEY
-    env.ANTHROPIC_API_KEY =
-      process.env.ANTHROPIC_API_KEY ||
-      "sk-ant-api03-placeholder-not-used-proxy-handles-auth-with-openrouter-key-xxxxxxxxxxxxxxxxxxxxx";
+    if (hasNativeAnthropicMapping(config)) {
+      // Native Claude model detected — let Claude Code use its real subscription
+      // credentials. Don't set placeholders, but preserve any real keys the user has.
+    } else {
+      // Pure alternative mode: all models go through proxy providers
+      // Use placeholder to prevent Claude Code login dialog
+      env.ANTHROPIC_API_KEY =
+        process.env.ANTHROPIC_API_KEY ||
+        "sk-ant-api03-placeholder-not-used-proxy-handles-auth-with-openrouter-key-xxxxxxxxxxxxxxxxxxxxx";
 
-    // Also set ANTHROPIC_AUTH_TOKEN to bypass login screen
-    // Claude Code checks both API_KEY and AUTH_TOKEN for authentication
-    env.ANTHROPIC_AUTH_TOKEN =
-      process.env.ANTHROPIC_AUTH_TOKEN || "placeholder-token-not-used-proxy-handles-auth";
+      // Also set ANTHROPIC_AUTH_TOKEN to bypass login screen
+      // Claude Code checks both API_KEY and AUTH_TOKEN for authentication
+      env.ANTHROPIC_AUTH_TOKEN =
+        process.env.ANTHROPIC_AUTH_TOKEN || "placeholder-token-not-used-proxy-handles-auth";
+    }
   }
 
   // Helper function to log messages (respects quiet flag)
@@ -358,6 +374,10 @@ export async function runClaudeWithProxy(
       console.log(message);
     }
   };
+
+  if (!config.monitor && hasNativeAnthropicMapping(config)) {
+    log("[claudish] Native Claude model detected — using Claude Code subscription credentials");
+  }
 
   if (config.interactive) {
     log(`\n[claudish] Model: ${modelDisplayName}\n`);
