@@ -92,20 +92,20 @@ jobs:
           fi
 
           # Append install section
-          cat >> release-notes.md <<'INSTALL'
-
-## Install
-
-```bash
-# npm
-npm install -g claudish
-
-# Homebrew
-brew install MadAppGang/tap/claudish
-
-# or download binary from assets below
-```
-INSTALL
+          {
+            echo ""
+            echo "## Install"
+            echo ""
+            echo '```bash'
+            echo "# npm"
+            echo "npm install -g claudish"
+            echo ""
+            echo "# Homebrew"
+            echo "brew install MadAppGang/tap/claudish"
+            echo ""
+            echo "# or download binary from assets below"
+            echo '```'
+          } >> release-notes.md
 
           # Add compare link
           if [ -n "$PREV_TAG" ]; then
