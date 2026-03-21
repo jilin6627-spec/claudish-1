@@ -2,6 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [5.18.0] - 2026-03-21
+
+### Documentation
+
+- update CHANGELOG.md for v5.17.0([`edff2d2`](https://github.com/MadAppGang/claudish/commit/edff2d245726937940f203ec0a74441b9e504ae8))
+
+### New Features
+
+- v5.18.0 - auto-detect Gemini subscription tier on login([`d691140`](https://github.com/MadAppGang/claudish/commit/d691140a36ceae1bb66f8bbc2b7c4621ef86974e))
+
 ## [5.17.0] - 2026-03-20
 
 ### Bug Fixes
