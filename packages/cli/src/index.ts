@@ -204,6 +204,7 @@ async function runCli() {
   } = await import("./providers/provider-resolver.js");
   const { initLogger, getLogFilePath, getAlwaysOnLogPath, setDiagOutput } = await import("./logger.js");
   const { createDiagOutput, LogFileDiagOutput } = await import("./diag-output.js");
+  const { tryCreatePtyRunner } = await import("./pty-diag-runner.js");
   const { findAvailablePort } = await import("./port-manager.js");
   const { createProxyServer } = await import("./proxy-server.js");
   const { checkForUpdates } = await import("./update-checker.js");
@@ -394,16 +395,22 @@ async function runCli() {
       }
     );
 
-    // In interactive mode, Claude Code owns the terminal — route diagnostic
-    // output to DiagOutput (file or tmux pane) to avoid corrupting the TUI.
-    // In single-shot mode, stderr is available normally so we use NullDiagOutput.
-    const diag = createDiagOutput({ interactive: cliConfig.interactive });
+    // Create PTY runner for built-in split view (Bun native PTY, no tmux needed)
+    // Skip if diagMode explicitly set to tmux/logfile/off
+    const needsPty = cliConfig.interactive && (cliConfig.diagMode === "auto" || cliConfig.diagMode === "pty");
+    const ptyRunner = needsPty ? await tryCreatePtyRunner() : null;
+
+    // Route diagnostic output: PTY split → tmux pane → log file (priority order)
+    const diag = createDiagOutput({
+      interactive: cliConfig.interactive,
+      ptyRunner,
+      diagMode: cliConfig.diagMode,
+    });
     if (cliConfig.interactive) {
       setDiagOutput(diag);
 
-      // If not in tmux, tell the user where to find diagnostic output
-      // (do this before spawning Claude Code while claudish still owns the terminal)
-      if (!process.env.TMUX && !cliConfig.quiet && diag instanceof LogFileDiagOutput) {
+      // If no PTY and no tmux, tell the user where to find diagnostic output
+      if (!ptyRunner && !process.env.TMUX && !cliConfig.quiet && diag instanceof LogFileDiagOutput) {
         console.log(`[claudish] Diagnostic log: ${diag.getLogPath()}`);
       }
     }
@@ -411,7 +418,7 @@ async function runCli() {
     // Run Claude Code with proxy
     let exitCode = 0;
     try {
-      exitCode = await runClaudeWithProxy(cliConfig, proxy.url, () => diag.cleanup());
+      exitCode = await runClaudeWithProxy(cliConfig, proxy.url, () => diag.cleanup(), ptyRunner);
     } finally {
       // Clear diagOutput BEFORE cleanup to prevent write-after-end
       setDiagOutput(null);

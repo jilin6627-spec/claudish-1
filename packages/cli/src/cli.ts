@@ -44,7 +44,7 @@ export {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-let VERSION = "5.18.1"; // Fallback version for compiled binaries
+let VERSION = "5.19.0"; // Fallback version for compiled binaries
 try {
   const packageJson = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf-8"));
   VERSION = packageJson.version;
@@ -103,6 +103,7 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
     stdin: false, // Read prompt from stdin instead of args
     freeOnly: false, // Show all models by default
     noLogs: false, // Always-on structural logging enabled by default
+    diagMode: "auto" as const, // Auto-detect best diagnostic output mode
     claudeArgs: [],
   };
 
@@ -141,6 +142,12 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
   const envSummarizeTools = process.env[ENV.CLAUDISH_SUMMARIZE_TOOLS];
   if (envSummarizeTools === "true" || envSummarizeTools === "1") {
     config.summarizeTools = true;
+  }
+
+  // Check for diagnostic mode env var (pty, tmux, logfile, off)
+  const envDiagMode = process.env[ENV.CLAUDISH_DIAG_MODE]?.toLowerCase();
+  if (envDiagMode && ["auto", "pty", "tmux", "logfile", "off"].includes(envDiagMode)) {
+    config.diagMode = envDiagMode as typeof config.diagMode;
   }
 
   // Parse command line arguments
@@ -314,6 +321,11 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
     } else if (arg === "--no-logs") {
       // Disable always-on structural logging to ~/.claudish/logs/
       config.noLogs = true;
+    } else if (arg === "--diag-mode" && i + 1 < args.length) {
+      const mode = args[++i].toLowerCase();
+      if (["auto", "pty", "tmux", "logfile", "off"].includes(mode)) {
+        config.diagMode = mode as typeof config.diagMode;
+      }
     } else if (arg === "--") {
       // Explicit separator: everything after -- passes directly to Claude Code.
       // This handles edge cases where a value starts with '-' (e.g. a system prompt
@@ -1687,6 +1699,7 @@ OPTIONS:
   --port <port>            Proxy server port (default: random)
   -d, --debug              Enable debug logging to file (logs/claudish_*.log)
   --no-logs                Disable always-on structural logging (~/.claudish/logs/)
+  --diag-mode <mode>       Diagnostic output: auto (default), pty, tmux, logfile, off
   --log-level <level>      Log verbosity: debug (full), info (truncated), minimal (labels only)
   -q, --quiet              Suppress [claudish] log messages (default in single-shot mode)
   -v, --verbose            Show [claudish] log messages (default in interactive mode)

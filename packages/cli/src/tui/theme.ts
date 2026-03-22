@@ -1,15 +1,36 @@
 /** @jsxImportSource @opentui/react */
-/** Tokyo Night color palette — shared across all TUI panels */
+/**
+ * btop-inspired color palette — true black base, vivid neon colors.
+ *
+ * 3 text tiers: white (primary) → gray (secondary) → dark-gray (tertiary)
+ * Bluish selection highlight like btop.
+ */
 export const C = {
-  bg: "#1a1b26",
-  bgAlt: "#24283b",
-  fg: "#c0caf5",
-  dim: "#565f89",
-  border: "#3b4261",
-  focusBorder: "#7aa2f7",
-  green: "#9ece6a",
-  red: "#f7768e",
-  yellow: "#e0af68",
-  cyan: "#7dcfff",
-  blue: "#7aa2f7",
+  bg: "#000000",
+  bgAlt: "#111111",
+  bgHighlight: "#1e3a5f",
+
+  fg: "#ffffff",
+  fgMuted: "#a0a0a0",
+  dim: "#555555",
+
+  border: "#333333",
+  focusBorder: "#57a5ff",
+
+  green: "#39ff14",
+  brightGreen: "#55ff55",
+  red: "#ff003c",
+  yellow: "#fce94f",
+  cyan: "#00ffff",
+  blue: "#0088ff",
+  magenta: "#ff00ff",
+  orange: "#ff8800",
+  white: "#ffffff",
+  black: "#000000",
+
+  // Unified tab theme based on blue
+  tabActiveBg: "#0088ff",
+  tabInactiveBg: "#001a33",
+  tabActiveFg: "#ffffff",
+  tabInactiveFg: "#0088ff",
 } as const;
