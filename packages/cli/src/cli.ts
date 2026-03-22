@@ -22,6 +22,11 @@ import {
   matchRoutingRule,
   buildRoutingChain,
 } from "./providers/routing-rules.js";
+import {
+  resolveApiKeyProvenance,
+  formatProvenanceProbe,
+  type KeyProvenance,
+} from "./providers/api-key-provenance.js";
 // Re-export from centralized provider-resolver for backwards compatibility
 export {
   resolveModelProvider,
@@ -1271,6 +1276,26 @@ async function probeModelRouting(models: string[], jsonOutput: boolean): Promise
 
   const results: ProbeResult[] = [];
 
+  const API_KEY_MAP: Record<string, { envVar: string; aliases?: string[] }> = {
+    litellm: { envVar: "LITELLM_API_KEY" },
+    openrouter: { envVar: "OPENROUTER_API_KEY" },
+    google: { envVar: "GEMINI_API_KEY" },
+    openai: { envVar: "OPENAI_API_KEY" },
+    minimax: { envVar: "MINIMAX_API_KEY" },
+    "minimax-coding": { envVar: "MINIMAX_CODING_API_KEY" },
+    kimi: { envVar: "MOONSHOT_API_KEY", aliases: ["KIMI_API_KEY"] },
+    "kimi-coding": { envVar: "KIMI_CODING_API_KEY" },
+    glm: { envVar: "ZHIPU_API_KEY", aliases: ["GLM_API_KEY"] },
+    "glm-coding": { envVar: "GLM_CODING_API_KEY", aliases: ["ZAI_CODING_API_KEY"] },
+    zai: { envVar: "ZAI_API_KEY" },
+    ollamacloud: { envVar: "OLLAMA_API_KEY" },
+    "opencode-zen": { envVar: "OPENCODE_API_KEY" },
+    "opencode-zen-go": { envVar: "OPENCODE_API_KEY" },
+    "gemini-codeassist": { envVar: "GEMINI_API_KEY" },
+    vertex: { envVar: "VERTEX_API_KEY", aliases: ["VERTEX_PROJECT"] },
+    poe: { envVar: "POE_API_KEY" },
+  };
+
   for (const modelInput of models) {
     const parsed = parseModelSpec(modelInput);
     const chain = (() => {
@@ -1311,37 +1336,19 @@ async function probeModelRouting(models: string[], jsonOutput: boolean): Promise
     })();
 
     // Check credentials for each route
-    const API_KEY_MAP: Record<string, { envVar: string; aliases?: string[] }> = {
-      litellm: { envVar: "LITELLM_API_KEY" },
-      openrouter: { envVar: "OPENROUTER_API_KEY" },
-      google: { envVar: "GEMINI_API_KEY" },
-      openai: { envVar: "OPENAI_API_KEY" },
-      minimax: { envVar: "MINIMAX_API_KEY" },
-      "minimax-coding": { envVar: "MINIMAX_CODING_API_KEY" },
-      kimi: { envVar: "MOONSHOT_API_KEY", aliases: ["KIMI_API_KEY"] },
-      "kimi-coding": { envVar: "KIMI_CODING_API_KEY" },
-      glm: { envVar: "ZHIPU_API_KEY", aliases: ["GLM_API_KEY"] },
-      "glm-coding": { envVar: "GLM_CODING_API_KEY", aliases: ["ZAI_CODING_API_KEY"] },
-      zai: { envVar: "ZAI_API_KEY" },
-      ollamacloud: { envVar: "OLLAMA_API_KEY" },
-      "opencode-zen": { envVar: "OPENCODE_API_KEY" },
-      "opencode-zen-go": { envVar: "OPENCODE_API_KEY" },
-      "gemini-codeassist": { envVar: "GEMINI_API_KEY" },
-      vertex: { envVar: "VERTEX_API_KEY", aliases: ["VERTEX_PROJECT"] },
-      poe: { envVar: "POE_API_KEY" },
-    };
-
     const chainDetails = chain.routes.map((route) => {
       const keyInfo = API_KEY_MAP[route.provider];
       let hasCredentials = false;
       let credentialHint: string | undefined;
+      let provenance: KeyProvenance | undefined;
 
       if (!keyInfo) {
         hasCredentials = true; // Unknown provider — assume OK
       } else if (!keyInfo.envVar) {
         hasCredentials = true; // No key needed (free/OAuth)
       } else {
-        hasCredentials = !!process.env[keyInfo.envVar];
+        provenance = resolveApiKeyProvenance(keyInfo.envVar, keyInfo.aliases);
+        hasCredentials = !!provenance.effectiveValue;
         if (!hasCredentials && keyInfo.aliases) {
           hasCredentials = keyInfo.aliases.some((a) => !!process.env[a]);
         }
@@ -1356,6 +1363,7 @@ async function probeModelRouting(models: string[], jsonOutput: boolean): Promise
         modelSpec: route.modelSpec,
         hasCredentials,
         credentialHint,
+        provenance,
       };
     });
 
@@ -1478,6 +1486,26 @@ async function probeModelRouting(models: string[], jsonOutput: boolean): Promise
       console.log(
         `  ${GREEN}  Direct → ${result.nativeProvider}${RESET}  (explicit provider prefix, no fallback chain)`
       );
+
+      // Show API key provenance layers for explicit provider routing
+      const directKeyInfo = API_KEY_MAP[result.nativeProvider];
+      if (directKeyInfo?.envVar) {
+        const provenance = resolveApiKeyProvenance(directKeyInfo.envVar, directKeyInfo.aliases);
+        console.log("");
+        if (provenance.effectiveValue) {
+          console.log(`  ${DIM}  API Key Resolution:${RESET}`);
+          for (const line of formatProvenanceProbe(provenance, "    ")) {
+            // Colorize the active layer
+            if (line.includes(">>>")) {
+              console.log(`  ${GREEN}${line}${RESET}`);
+            } else {
+              console.log(`  ${DIM}${line}${RESET}`);
+            }
+          }
+        } else {
+          console.log(`  ${RED}  API key: ${directKeyInfo.envVar} not set!${RESET}`);
+        }
+      }
     } else if (result.chain.length === 0) {
       console.log(`  ${RED}  No providers available${RESET} — no credentials configured`);
     } else {
@@ -1520,6 +1548,19 @@ async function probeModelRouting(models: string[], jsonOutput: boolean): Promise
         console.log(
           `\n  ${DIM}  Will use: ${RESET}${GREEN}${firstReady.displayName}${RESET}${DIM} (${readyCount}/${result.chain.length} providers available)${RESET}`
         );
+
+        // Show API key provenance for the active provider
+        if (firstReady.provenance?.effectiveValue) {
+          console.log("");
+          console.log(`  ${DIM}  API Key Resolution:${RESET}`);
+          for (const line of formatProvenanceProbe(firstReady.provenance, "    ")) {
+            if (line.includes(">>>")) {
+              console.log(`  ${GREEN}${line}${RESET}`);
+            } else {
+              console.log(`  ${DIM}${line}${RESET}`);
+            }
+          }
+        }
 
         if (result.wiring) {
           const w = result.wiring;

@@ -34,6 +34,7 @@ import { DefaultAdapter } from "../adapters/base-adapter.js";
 import { getRegisteredRemoteProviders } from "./remote-provider-registry.js";
 import { getVertexConfig, validateVertexOAuthConfig } from "../auth/vertex-auth.js";
 import { log, logStderr } from "../logger.js";
+import { resolveApiKeyProvenance, formatProvenanceLog } from "./api-key-provenance.js";
 import type { ModelHandler } from "../handlers/types.js";
 
 // ---------------------------------------------------------------------------
@@ -347,5 +348,13 @@ export function createHandlerForProvider(ctx: ProfileContext): ModelHandler | nu
   if (!profile) {
     return null; // Unknown provider — caller should fall through to OpenRouter or return null
   }
+
+  // Log API key provenance so debug logs show exactly which key is used and where it came from
+  if (ctx.provider.apiKeyEnvVar) {
+    const provenance = resolveApiKeyProvenance(ctx.provider.apiKeyEnvVar);
+    log(`[Proxy] API key: ${formatProvenanceLog(provenance)}`);
+  }
+  log(`[Proxy] Handler: provider=${ctx.provider.name}, model=${ctx.modelName}`);
+
   return profile.createHandler(ctx);
 }
