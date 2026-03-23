@@ -53,6 +53,12 @@ jobs:
           # Build from root to preserve workspace resolution
           bun build packages/cli/src/index.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }}
 
+      - name: Ad-hoc sign binary (macOS Gatekeeper compatibility)
+        if: startsWith(matrix.target, 'bun-darwin')
+        run: |
+          codesign --force --deep --sign - ${{ matrix.artifact }}
+          codesign -v ${{ matrix.artifact }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
