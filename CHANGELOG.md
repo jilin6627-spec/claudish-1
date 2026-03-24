@@ -2,6 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.2.0] - 2026-03-24
+
+### Documentation
+
+- update CHANGELOG.md for v6.1.1([`d0af752`](https://github.com/MadAppGang/claudish/commit/d0af752ae85e69fda091906adc9ef9259089fcd2))
+
+### New Features
+
+- v6.2.0 - isProviderAvailable interface, xAI provider, model selector improvements([`e84dcc6`](https://github.com/MadAppGang/claudish/commit/e84dcc608dc9695b2f48b7d2fbe95cf3288bc070))
+
 ## [6.1.1] - 2026-03-24
 
 ### Bug Fixes
