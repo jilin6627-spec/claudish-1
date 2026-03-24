@@ -10,6 +10,9 @@
  */
 
 import type { RemoteProvider } from "../handlers/shared/remote-provider-types.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,6 +87,8 @@ export interface ProviderDefinition {
   isDirectApi?: boolean;
   /** Shortest @ prefix for handler creation (reverse of shortcuts) */
   shortestPrefix?: string;
+  /** Short description for TUI display (e.g., "580+ models, default backend") */
+  description?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +115,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     ],
     nativeModelPatterns: [{ pattern: /^google\//i }, { pattern: /^gemini-/i }],
     isDirectApi: true,
+    description: "Direct Gemini API (g@, google@)",
   },
 
   // ── Gemini Code Assist (OAuth) ─────────────────────────────────────
@@ -126,6 +132,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     shortestPrefix: "go",
     legacyPrefixes: [{ prefix: "go/", stripPrefix: true }],
     isDirectApi: true,
+    description: "Gemini Code Assist OAuth (go@)",
   },
 
   // ── OpenAI (direct API) ────────────────────────────────────────────
@@ -151,6 +158,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { pattern: /^chatgpt-/i },
     ],
     isDirectApi: true,
+    description: "Direct OpenAI API (oai@)",
   },
 
   // ── OpenRouter ─────────────────────────────────────────────────────
@@ -171,6 +179,28 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       "HTTP-Referer": "https://claudish.com",
       "X-Title": "Claudish - OpenRouter Proxy",
     },
+    isDirectApi: true,
+    description: "580+ models, default backend (or@)",
+  },
+
+  // ── xAI / Grok (OpenAI-compatible) ──────────────────────────────────
+  {
+    name: "xai",
+    displayName: "xAI",
+    transport: "openai",
+    tokenStrategy: "delta-aware",
+    baseUrl: "https://api.x.ai",
+    apiPath: "/v1/chat/completions",
+    apiKeyEnvVar: "XAI_API_KEY",
+    apiKeyDescription: "xAI API Key",
+    apiKeyUrl: "https://console.x.ai/",
+    shortcuts: ["xai", "grok"],
+    shortestPrefix: "xai",
+    legacyPrefixes: [{ prefix: "xai/", stripPrefix: true }],
+    nativeModelPatterns: [
+      { pattern: /^x-ai\//i },
+      { pattern: /^grok-/i },
+    ],
     isDirectApi: true,
   },
 
@@ -198,6 +228,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { pattern: /^abab-/i },
     ],
     isDirectApi: true,
+    description: "MiniMax API (mm@, mmax@)",
   },
 
   // ── MiniMax Coding Plan ────────────────────────────────────────────
@@ -216,6 +247,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     shortestPrefix: "mmc",
     legacyPrefixes: [{ prefix: "mmc/", stripPrefix: true }],
     isDirectApi: true,
+    description: "MiniMax Coding Plan (mmc@)",
   },
 
   // ── Kimi Coding Plan (must be before Kimi — kimi-for-coding$ is more specific than kimi-*)
@@ -227,13 +259,15 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     apiPath: "/messages",
     apiKeyEnvVar: "KIMI_CODING_API_KEY",
     apiKeyDescription: "Kimi Coding API Key",
-    apiKeyUrl: "https://kimi.com/code (get key from membership page, or run: claudish --kimi-login)",
+    apiKeyUrl:
+      "https://kimi.com/code (get key from membership page, or run: claudish --kimi-login)",
     oauthFallback: "kimi-oauth.json",
     shortcuts: ["kc"],
     shortestPrefix: "kc",
     legacyPrefixes: [{ prefix: "kc/", stripPrefix: true }],
     nativeModelPatterns: [{ pattern: /^kimi-for-coding$/i }],
     isDirectApi: true,
+    description: "Kimi Coding Plan (kc@)",
   },
 
   // ── Kimi / Moonshot (Anthropic-compatible) ─────────────────────────
@@ -260,6 +294,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { pattern: /^kimi-/i },
     ],
     isDirectApi: true,
+    description: "Kimi API (kimi@, moon@)",
   },
 
   // ── GLM / Zhipu (OpenAI-compatible) ────────────────────────────────
@@ -287,6 +322,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { pattern: /^chatglm-/i },
     ],
     isDirectApi: true,
+    description: "GLM API (glm@, zhipu@)",
   },
 
   // ── GLM Coding Plan ────────────────────────────────────────────────
@@ -305,6 +341,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     shortestPrefix: "gc",
     legacyPrefixes: [{ prefix: "gc/", stripPrefix: true }],
     isDirectApi: true,
+    description: "GLM Coding Plan (gc@)",
   },
 
   // ── Z.AI (Anthropic-compatible GLM API) ────────────────────────────
@@ -323,6 +360,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     legacyPrefixes: [{ prefix: "zai/", stripPrefix: true }],
     nativeModelPatterns: [{ pattern: /^z-ai\//i }, { pattern: /^zai\//i }],
     isDirectApi: true,
+    description: "Z.AI API (zai@)",
   },
 
   // ── OllamaCloud ────────────────────────────────────────────────────
@@ -347,6 +385,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { pattern: /^llama3/i },
     ],
     isDirectApi: true,
+    description: "Cloud Ollama (oc@, llama@)",
   },
 
   // ── OpenCode Zen (free anonymous + paid) ───────────────────────────
@@ -366,6 +405,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     shortestPrefix: "zen",
     legacyPrefixes: [{ prefix: "zen/", stripPrefix: true }],
     isDirectApi: true,
+    description: "OpenCode Zen (zen@) - free models",
   },
 
   // ── OpenCode Zen Go (lite plan) ────────────────────────────────────
@@ -387,6 +427,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { prefix: "zgo/", stripPrefix: true },
     ],
     isDirectApi: true,
+    description: "OpenCode Zen Go plan (zengo@)",
   },
 
   // ── Vertex AI ──────────────────────────────────────────────────────
@@ -407,6 +448,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { prefix: "vertex/", stripPrefix: true },
     ],
     isDirectApi: true,
+    description: "Vertex AI Express (v@, vertex@)",
   },
 
   // ── LiteLLM ────────────────────────────────────────────────────────
@@ -427,6 +469,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { prefix: "ll/", stripPrefix: true },
     ],
     isDirectApi: true,
+    description: "LiteLLM proxy (ll@, litellm@)",
   },
 
   // ── Poe ────────────────────────────────────────────────────────────
@@ -444,6 +487,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     legacyPrefixes: [],
     nativeModelPatterns: [{ pattern: /^poe:/i }],
     isDirectApi: true,
+    description: "Poe API (poe@)",
   },
 
   // ── Ollama (local) ─────────────────────────────────────────────────
@@ -463,6 +507,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { prefix: "ollama:", stripPrefix: true },
     ],
     isLocal: true,
+    description: "Local Ollama (ollama@)",
   },
 
   // ── LM Studio (local) ──────────────────────────────────────────────
@@ -484,6 +529,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { prefix: "mlstudio:", stripPrefix: true },
     ],
     isLocal: true,
+    description: "Local LM Studio (lms@)",
   },
 
   // ── vLLM (local) ───────────────────────────────────────────────────
@@ -503,6 +549,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { prefix: "vllm:", stripPrefix: true },
     ],
     isLocal: true,
+    description: "Local vLLM (vllm@)",
   },
 
   // ── MLX (local) ────────────────────────────────────────────────────
@@ -522,6 +569,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
       { prefix: "mlx:", stripPrefix: true },
     ],
     isLocal: true,
+    description: "Local MLX (mlx@)",
   },
 
   // ── Qwen (auto-routed, no direct API) ──────────────────────────────
@@ -538,6 +586,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     shortestPrefix: "qwen",
     legacyPrefixes: [],
     nativeModelPatterns: [{ pattern: /^qwen/i }],
+    description: "Qwen (auto-routed via OpenRouter)",
   },
 
   // ── Native Anthropic (Claude Code auth) ────────────────────────────
@@ -554,6 +603,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     shortestPrefix: "",
     legacyPrefixes: [],
     nativeModelPatterns: [{ pattern: /^anthropic\//i }, { pattern: /^claude-/i }],
+    description: "Native Claude Code auth",
   },
 ];
 
@@ -658,9 +708,7 @@ export function getProviderByName(name: string): ProviderDefinition | undefined 
  * Get API key info for a provider.
  * Replaces API_KEY_INFO in provider-resolver.ts.
  */
-export function getApiKeyInfo(
-  providerName: string
-): {
+export function getApiKeyInfo(providerName: string): {
   envVar: string;
   description: string;
   url: string;
@@ -787,4 +835,57 @@ export function getApiKeyEnvVars(
     envVar: def.apiKeyEnvVar,
     aliases: def.apiKeyAliases,
   };
+}
+
+/**
+ * Check if a provider has what it needs to be usable (API key, local service, etc.).
+ *
+ * A provider is available when ANY of the following is true:
+ * - It's a local provider (no API key needed)
+ * - It has a publicKeyFallback (e.g. Zen free tier)
+ * - Its primary apiKeyEnvVar is set in the environment
+ * - Any of its apiKeyAliases are set in the environment
+ * - Its oauthFallback credential file exists in ~/.claudish/
+ *
+ * Used by model-selector to hide providers the user hasn't configured.
+ */
+export function isProviderAvailable(def: ProviderDefinition): boolean {
+  // Local providers are always available
+  if (def.isLocal) return true;
+
+  // Providers with public fallback keys are always available
+  if (def.publicKeyFallback) return true;
+
+  // No API key required (e.g. auto-routed providers)
+  if (!def.apiKeyEnvVar) return true;
+
+  // Check primary env var
+  if (process.env[def.apiKeyEnvVar]) return true;
+
+  // Check aliases
+  if (def.apiKeyAliases) {
+    for (const alias of def.apiKeyAliases) {
+      if (process.env[alias]) return true;
+    }
+  }
+
+  // Check OAuth fallback credential file
+  if (def.oauthFallback) {
+    try {
+      if (existsSync(join(homedir(), ".claudish", def.oauthFallback))) return true;
+    } catch {
+      // fs check failed, treat as unavailable
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check provider availability by canonical name.
+ */
+export function isProviderAvailableByName(providerName: string): boolean {
+  const def = getProviderByName(providerName);
+  if (!def) return false;
+  return isProviderAvailable(def);
 }

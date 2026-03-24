@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { OpenRouterModel } from "./types.js";
 import { getAvailableModels, fetchLiteLLMModels } from "./model-loader.js";
+import { getProviderByName, isProviderAvailable } from "./providers/provider-definitions.js";
 
 // Get __dirname equivalent in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +51,11 @@ export interface ModelInfo {
     | "OpenAI"
     | "GLM"
     | "GLM Coding"
+    | "MiniMax"
+    | "MiniMax Coding"
+    | "Kimi"
+    | "Kimi Coding"
+    | "Z.AI"
     | "OllamaCloud"
     | "LiteLLM"
     | "Recommended"; // Which platform the model is from
@@ -839,29 +845,50 @@ async function getAllModelsForSearch(forceUpdate = false): Promise<ModelInfo[]> 
   const litellmBaseUrl = process.env.LITELLM_BASE_URL;
   const litellmApiKey = process.env.LITELLM_API_KEY;
 
-  // Build named fetch entries for robust error handling
-  const fetchEntries: Array<{ name: string; promise: Promise<ModelInfo[]> }> = [
+  // Build named fetch entries — each entry maps to a ProviderDefinition by name.
+  // Only fetch from providers that are available (have API keys / credentials configured).
+  // OpenRouter is always fetched (it's the fallback aggregator).
+  const allEntries: Array<{
+    name: string;
+    provider?: string; // ProviderDefinition.name — if set, availability is checked
+    promise: () => Promise<ModelInfo[]>;
+  }> = [
     {
       name: "OpenRouter",
-      promise: fetchAllModels(forceUpdate).then((models) => models.map(toModelInfo)),
+      promise: () => fetchAllModels(forceUpdate).then((models) => models.map(toModelInfo)),
     },
-    { name: "xAI", promise: fetchXAIModels() },
-    { name: "Gemini", promise: fetchGeminiModels() },
-    { name: "OpenAI", promise: fetchOpenAIModels() },
-    { name: "GLM", promise: fetchGLMDirectModels() },
-    { name: "GLM Coding", promise: fetchGLMCodingModels() },
-    { name: "OllamaCloud", promise: fetchOllamaCloudModels() },
-    { name: "Zen", promise: fetchZenFreeModels() },
-    { name: "Zen Go", promise: fetchZenGoModels() },
+    { name: "xAI", provider: "xai", promise: () => fetchXAIModels() },
+    { name: "Gemini", provider: "google", promise: () => fetchGeminiModels() },
+    { name: "OpenAI", provider: "openai", promise: () => fetchOpenAIModels() },
+    { name: "GLM", provider: "glm", promise: () => fetchGLMDirectModels() },
+    { name: "GLM Coding", provider: "glm-coding", promise: () => fetchGLMCodingModels() },
+    { name: "OllamaCloud", provider: "ollamacloud", promise: () => fetchOllamaCloudModels() },
+    { name: "Zen", provider: "opencode-zen", promise: () => fetchZenFreeModels() },
+    { name: "Zen Go", provider: "opencode-zen-go", promise: () => fetchZenGoModels() },
+    // Subscription/direct-API providers without catalog APIs — use known models
+    { name: "MiniMax", provider: "minimax", promise: () => Promise.resolve(getKnownModels("minimax")) },
+    { name: "MiniMax Coding", provider: "minimax-coding", promise: () => Promise.resolve(getKnownModels("minimax-coding")) },
+    { name: "Kimi", provider: "kimi", promise: () => Promise.resolve(getKnownModels("kimi")) },
+    { name: "Kimi Coding", provider: "kimi-coding", promise: () => Promise.resolve(getKnownModels("kimi-coding")) },
+    { name: "Z.AI", provider: "zai", promise: () => Promise.resolve(getKnownModels("zai")) },
   ];
 
-  // Add LiteLLM fetch if configured
   if (litellmBaseUrl && litellmApiKey) {
-    fetchEntries.push({
+    allEntries.push({
       name: "LiteLLM",
-      promise: fetchLiteLLMModels(litellmBaseUrl, litellmApiKey, forceUpdate),
+      provider: "litellm",
+      promise: () => fetchLiteLLMModels(litellmBaseUrl, litellmApiKey, forceUpdate),
     });
   }
+
+  // Filter to only available providers, then launch fetches in parallel
+  const fetchEntries = allEntries
+    .filter((e) => {
+      if (!e.provider) return true; // No provider mapping — let the fetcher decide
+      const def = getProviderByName(e.provider);
+      return def ? isProviderAvailable(def) : true;
+    })
+    .map((e) => ({ name: e.name, promise: e.promise() }));
 
   // Use allSettled so one failing provider can't break the whole list
   const settled = await Promise.allSettled(fetchEntries.map((e) => e.promise));
@@ -872,20 +899,27 @@ async function getAllModelsForSearch(forceUpdate = false): Promise<ModelInfo[]> 
     fetchResults[fetchEntries[i].name] = result.status === "fulfilled" ? result.value : [];
   }
 
-  // Combine results: Zen first (free), then OllamaCloud, then direct providers, then LiteLLM, then OpenRouter
-  const directApiModels = [
-    ...fetchResults["xAI"],
-    ...fetchResults["Gemini"],
-    ...fetchResults["OpenAI"],
-    ...fetchResults["GLM"],
-    ...fetchResults["GLM Coding"],
-  ];
+  // Helper: get results for a provider (empty array if filtered out or failed)
+  const r = (name: string) => fetchResults[name] || [];
+
+  // Combine results: Zen first (free), then OllamaCloud, then direct providers,
+  // then subscription providers, then LiteLLM, then OpenRouter
   const allModels = [
-    ...fetchResults["Zen"],
-    ...fetchResults["OllamaCloud"],
-    ...directApiModels,
-    ...(fetchResults["LiteLLM"] || []),
-    ...fetchResults["OpenRouter"],
+    ...r("Zen"),
+    ...r("Zen Go"),
+    ...r("OllamaCloud"),
+    ...r("xAI"),
+    ...r("Gemini"),
+    ...r("OpenAI"),
+    ...r("GLM"),
+    ...r("GLM Coding"),
+    ...r("MiniMax"),
+    ...r("MiniMax Coding"),
+    ...r("Kimi"),
+    ...r("Kimi Coding"),
+    ...r("Z.AI"),
+    ...r("LiteLLM"),
+    ...r("OpenRouter"),
   ];
 
   return allModels;
@@ -917,8 +951,11 @@ function formatModelChoice(model: ModelInfo, showSource = false): string {
       OpenAI: "OAI",
       GLM: "GLM",
       "GLM Coding": "GC",
+      MiniMax: "MM",
       "MiniMax Coding": "MMC",
+      Kimi: "Kimi",
       "Kimi Coding": "KC",
+      "Z.AI": "ZAI",
       OllamaCloud: "OC",
       LiteLLM: "LL",
     };
@@ -947,10 +984,16 @@ const PROVIDER_FILTER_ALIASES: Record<string, string> = {
   glm: "GLM",
   "glm-coding": "GLM Coding",
   gc: "GLM Coding",
+  minimax: "MiniMax",
+  mm: "MiniMax",
   mmc: "MiniMax Coding",
   "minimax-coding": "MiniMax Coding",
+  kimi: "Kimi",
+  moon: "Kimi",
+  moonshot: "Kimi",
   kc: "Kimi Coding",
   "kimi-coding": "Kimi Coding",
+  zai: "Z.AI",
   ollamacloud: "OllamaCloud",
   oc: "OllamaCloud",
   litellm: "LiteLLM",
@@ -1191,79 +1234,37 @@ export async function selectModel(options: ModelSelectorOptions = {}): Promise<s
 }
 
 /**
- * Provider choices for profile model configuration
+ * Provider choices for profile model configuration.
+ *
+ * Each entry maps to a ProviderDefinition via `provider` field.
+ * Availability is checked via isProviderAvailable() — no more ad-hoc envVar checks.
  */
 const ALL_PROVIDER_CHOICES: Array<{
   name: string;
   value: string;
   description: string;
-  envVar?: string;
+  provider?: string; // ProviderDefinition.name — if set, availability is checked
 }> = [
   {
     name: "Skip (keep Claude default)",
     value: "skip",
     description: "Use native Claude model for this tier",
   },
-  { name: "OpenRouter", value: "openrouter", description: "580+ models via unified API" },
-  { name: "OpenCode Zen", value: "zen", description: "Free models, no API key needed" },
-  {
-    name: "Google Gemini",
-    value: "google",
-    description: "Direct API (GEMINI_API_KEY)",
-    envVar: "GEMINI_API_KEY",
-  },
-  {
-    name: "OpenAI",
-    value: "openai",
-    description: "Direct API (OPENAI_API_KEY)",
-    envVar: "OPENAI_API_KEY",
-  },
-  {
-    name: "xAI / Grok",
-    value: "xai",
-    description: "Direct API (XAI_API_KEY)",
-    envVar: "XAI_API_KEY",
-  },
-  {
-    name: "MiniMax",
-    value: "minimax",
-    description: "Direct API (MINIMAX_API_KEY)",
-    envVar: "MINIMAX_API_KEY",
-  },
-  {
-    name: "MiniMax Coding",
-    value: "minimax-coding",
-    description: "MiniMax Coding subscription (MINIMAX_CODING_API_KEY)",
-    envVar: "MINIMAX_CODING_API_KEY",
-  },
-  {
-    name: "Kimi / Moonshot",
-    value: "kimi",
-    description: "Direct API (MOONSHOT_API_KEY)",
-    envVar: "MOONSHOT_API_KEY",
-  },
-  {
-    name: "Kimi Coding",
-    value: "kimi-coding",
-    description: "Kimi Coding subscription (KIMI_CODING_API_KEY)",
-    envVar: "KIMI_CODING_API_KEY",
-  },
-  {
-    name: "GLM / Zhipu",
-    value: "glm",
-    description: "Direct API (ZHIPU_API_KEY)",
-    envVar: "ZHIPU_API_KEY",
-  },
-  {
-    name: "GLM Coding Plan",
-    value: "glm-coding",
-    description: "GLM Coding subscription (GLM_CODING_API_KEY)",
-    envVar: "GLM_CODING_API_KEY",
-  },
-  { name: "Z.AI", value: "zai", description: "Z.AI API (ZAI_API_KEY)", envVar: "ZAI_API_KEY" },
-  { name: "OllamaCloud", value: "ollamacloud", description: "Cloud models (OLLAMA_API_KEY)" },
-  { name: "Ollama (local)", value: "ollama", description: "Local Ollama instance" },
-  { name: "LM Studio (local)", value: "lmstudio", description: "Local LM Studio instance" },
+  { name: "OpenRouter", value: "openrouter", description: "580+ models via unified API", provider: "openrouter" },
+  { name: "OpenCode Zen", value: "zen", description: "Free models, no API key needed", provider: "opencode-zen" },
+  { name: "Google Gemini", value: "google", description: "Direct API", provider: "google" },
+  { name: "OpenAI", value: "openai", description: "Direct API", provider: "openai" },
+  { name: "xAI / Grok", value: "xai", description: "Direct API", provider: "xai" },
+  { name: "MiniMax", value: "minimax", description: "Direct API", provider: "minimax" },
+  { name: "MiniMax Coding", value: "minimax-coding", description: "Coding subscription", provider: "minimax-coding" },
+  { name: "Kimi / Moonshot", value: "kimi", description: "Direct API", provider: "kimi" },
+  { name: "Kimi Coding", value: "kimi-coding", description: "Coding subscription", provider: "kimi-coding" },
+  { name: "GLM / Zhipu", value: "glm", description: "Direct API", provider: "glm" },
+  { name: "GLM Coding Plan", value: "glm-coding", description: "Coding subscription", provider: "glm-coding" },
+  { name: "Z.AI", value: "zai", description: "Direct API", provider: "zai" },
+  { name: "OllamaCloud", value: "ollamacloud", description: "Cloud models", provider: "ollamacloud" },
+  { name: "Ollama (local)", value: "ollama", description: "Local Ollama instance", provider: "ollama" },
+  { name: "LM Studio (local)", value: "lmstudio", description: "Local LM Studio instance", provider: "lmstudio" },
   {
     name: "Enter custom model",
     value: "custom",
@@ -1272,11 +1273,16 @@ const ALL_PROVIDER_CHOICES: Array<{
 ];
 
 /**
- * Get provider choices filtered by available env vars
- * Providers with envVar requirement are only shown when that env var is set
+ * Get provider choices filtered by provider availability.
+ * Uses isProviderAvailable() from ProviderDefinition — each provider validates
+ * itself (API keys, OAuth credentials, local service, public fallback).
  */
 function getProviderChoices() {
-  return ALL_PROVIDER_CHOICES.filter((choice) => !choice.envVar || process.env[choice.envVar]);
+  return ALL_PROVIDER_CHOICES.filter((choice) => {
+    if (!choice.provider) return true; // skip, custom — always shown
+    const def = getProviderByName(choice.provider);
+    return def ? isProviderAvailable(def) : true;
+  });
 }
 
 /**
@@ -1309,6 +1315,12 @@ const PROVIDER_SOURCE_FILTER: Record<string, string> = {
   openai: "OpenAI",
   xai: "xAI",
   glm: "GLM",
+  "glm-coding": "GLM Coding",
+  minimax: "MiniMax",
+  "minimax-coding": "MiniMax Coding",
+  kimi: "Kimi",
+  "kimi-coding": "Kimi Coding",
+  zai: "Z.AI",
   ollamacloud: "OllamaCloud",
   zen: "Zen",
 };
@@ -1451,6 +1463,21 @@ function getKnownModels(provider: string): ModelInfo[] {
     ],
   };
 
+  // Map provider key → source tag for display in selector
+  const sourceMap: Record<string, ModelInfo["source"]> = {
+    minimax: "MiniMax",
+    "minimax-coding": "MiniMax Coding",
+    kimi: "Kimi",
+    "kimi-coding": "Kimi Coding",
+    zai: "Z.AI",
+    glm: "GLM",
+    "glm-coding": "GLM Coding",
+    ollamacloud: "OllamaCloud",
+    google: "Gemini",
+    openai: "OpenAI",
+    xai: "xAI",
+  };
+
   const providerDisplay = provider.charAt(0).toUpperCase() + provider.slice(1);
   return (known[provider] || []).map((m) => ({
     id: m.id,
@@ -1459,6 +1486,7 @@ function getKnownModels(provider: string): ModelInfo[] {
     provider: providerDisplay,
     context: m.context,
     supportsTools: true,
+    source: sourceMap[provider],
   }));
 }
 

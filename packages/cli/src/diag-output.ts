@@ -3,7 +3,10 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { WriteStream } from "node:fs";
-import type { PtyDiagRunner } from "./pty-diag-runner.js";
+import type { MtmDiagRunner } from "./pty-diag-runner.js";
+
+// Backward-compat alias so old call sites using PtyDiagRunner still compile
+type PtyDiagRunner = MtmDiagRunner;
 
 /**
  * DiagOutput separates claudish diagnostic messages from Claude Code's TUI.
@@ -111,11 +114,10 @@ export class TmuxDiagOutput extends LogFileDiagOutput {
         args.push("-t", targetPane);
       }
       args.push("tail", "-f", this.logPath);
-      const output = execFileSync(
-        "tmux",
-        args,
-        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
+      const output = execFileSync("tmux", args, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
       this.paneId = output.trim();
     } catch {
       // Tmux might be detected but fail (e.g., not enough space, wrong version)
@@ -140,31 +142,41 @@ export class TmuxDiagOutput extends LogFileDiagOutput {
 }
 
 /**
- * OpentUiDiagOutput routes diagnostics through the PtyDiagRunner's opentui
- * split panel. Shows errors dynamically at the bottom of the terminal,
- * auto-hides after 10s. Works everywhere — no tmux required.
+ * MtmDiagOutput routes diagnostics to the MtmDiagRunner's log file.
+ * The mtm bottom pane shows the log live via `tail -f`.
  */
-export class OpentUiDiagOutput implements DiagOutput {
-  private messages: Array<{ text: string; level: "error" | "warn" | "info" }> = [];
-
-  constructor(private runner: PtyDiagRunner) {}
+export class MtmDiagOutput implements DiagOutput {
+  constructor(private runner: MtmDiagRunner) {}
 
   write(msg: string): void {
-    const level = msg.toLowerCase().includes("error")
-      ? "error" as const
-      : msg.toLowerCase().includes("warn")
-        ? "warn" as const
-        : "info" as const;
-    this.messages.push({ text: msg, level });
-    // Keep last 4 messages
-    if (this.messages.length > 4) {
-      this.messages = this.messages.slice(-4);
-    }
-    this.runner.showDiag(this.messages).catch(() => {}); // fire-and-forget
+    this.runner.write(msg);
   }
 
   cleanup(): void {
-    this.runner.hideDiag();
+    // MtmDiagRunner cleanup is handled when the mtm process exits.
+    // We don't call runner.cleanup() here because that would delete the log
+    // file while mtm is still running and showing it.
+  }
+}
+
+/**
+ * OpentUiDiagOutput is kept for backward compatibility but now wraps
+ * MtmDiagOutput. New code uses MtmDiagOutput directly.
+ * @deprecated Use MtmDiagOutput
+ */
+export class OpentUiDiagOutput implements DiagOutput {
+  private inner: MtmDiagOutput;
+
+  constructor(runner: PtyDiagRunner) {
+    this.inner = new MtmDiagOutput(runner);
+  }
+
+  write(msg: string): void {
+    this.inner.write(msg);
+  }
+
+  cleanup(): void {
+    this.inner.cleanup();
   }
 }
 
@@ -186,8 +198,8 @@ export class NullDiagOutput implements DiagOutput {
  * Factory: create the appropriate DiagOutput based on config and environment.
  *
  * diagMode controls which implementation is used:
- *   "auto" (default) → PTY runner → tmux → log file (priority order)
- *   "pty"            → PTY runner only (fall back to logfile if unavailable)
+ *   "auto" (default) → mtm → tmux → log file (priority order)
+ *   "pty"            → mtm only (fall back to logfile if unavailable)
  *   "tmux"           → tmux pane only (fall back to logfile if not in tmux)
  *   "logfile"        → log file only (no live display)
  *   "off"            → no diagnostics at all
@@ -198,6 +210,7 @@ export class NullDiagOutput implements DiagOutput {
 export function createDiagOutput(options: {
   interactive: boolean;
   ptyRunner?: PtyDiagRunner | null;
+  mtmRunner?: MtmDiagRunner | null;
   diagMode?: "auto" | "pty" | "tmux" | "logfile" | "off";
 }): DiagOutput {
   if (!options.interactive) {
@@ -210,9 +223,12 @@ export function createDiagOutput(options: {
     return new NullDiagOutput();
   }
 
+  // Resolve mtm runner (accept either ptyRunner or mtmRunner for compat)
+  const mtmRunner = options.mtmRunner ?? options.ptyRunner ?? null;
+
   if (mode === "pty" || mode === "auto") {
-    if (options.ptyRunner) {
-      return new OpentUiDiagOutput(options.ptyRunner);
+    if (mtmRunner) {
+      return new MtmDiagOutput(mtmRunner);
     }
     // pty explicitly requested but unavailable — fall through
     if (mode === "pty") {

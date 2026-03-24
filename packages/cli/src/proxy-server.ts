@@ -46,7 +46,7 @@ import {
 } from "./providers/model-catalog-resolver.js";
 import { FallbackHandler } from "./handlers/fallback-handler.js";
 import type { FallbackCandidate } from "./handlers/fallback-handler.js";
-import { getFallbackChain, warmZenModelCache } from "./providers/auto-route.js";
+import { getFallbackChain, warmZenModelCache, warmZenGoModelCache } from "./providers/auto-route.js";
 import {
   loadRoutingRules,
   matchRoutingRule,
@@ -281,6 +281,11 @@ export async function createProxyServer(
   // Pre-warm Zen model cache for fallback chain filtering (non-blocking)
   warmZenModelCache()
     .then(() => log("[Proxy] Zen model cache pre-warmed for fallback filtering"))
+    .catch(() => {});
+
+  // Pre-warm Zen Go model cache separately (Zen Go serves only 4 models via /go endpoint)
+  warmZenGoModelCache()
+    .then(() => log("[Proxy] Zen Go model cache pre-warmed for fallback filtering"))
     .catch(() => {});
 
   // Load custom routing rules once at startup (local .claudish.json takes priority over global)

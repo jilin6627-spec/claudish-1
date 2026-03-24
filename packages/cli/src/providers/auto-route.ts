@@ -349,7 +349,7 @@ export async function warmZenModelCache(): Promise<void> {
     signal: AbortSignal.timeout(5000),
   });
   if (!resp.ok) return;
-  const data = await resp.json() as any;
+  const data = (await resp.json()) as any;
   const models = (data.data ?? []).map((m: any) => ({ id: m.id }));
   if (models.length === 0) return;
 
@@ -358,6 +358,60 @@ export async function warmZenModelCache(): Promise<void> {
   mkdirSync(cacheDir, { recursive: true });
   writeSync(
     join(cacheDir, "zen-models.json"),
+    JSON.stringify({ models, fetchedAt: new Date().toISOString() })
+  );
+}
+
+/**
+ * Read the cached Zen Go model list from disk (written by warmZenGoModelCache).
+ * Returns a Set of model IDs that Zen Go serves, or null if cache not available.
+ * Zen Go only serves a small set of models (GLM-5, Kimi K2.5, MiniMax M2.5, MiniMax M2.7).
+ */
+function readZenGoModelCacheSync(): Set<string> | null {
+  const cachePath = join(homedir(), ".claudish", "zen-go-models.json");
+  if (!existsSync(cachePath)) return null;
+  try {
+    const data = JSON.parse(readFileSync(cachePath, "utf-8"));
+    if (!Array.isArray(data.models)) return null;
+    return new Set(data.models.map((m: any) => m.id));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a model is served by OpenCode Zen Go.
+ * Uses the separate zen-go-models.json cache (fetched from zen/go/v1/models).
+ * If cache is unavailable, conservatively returns false.
+ */
+function isZenGoCompatibleModel(modelName: string): boolean {
+  const zenGoModels = readZenGoModelCacheSync();
+  if (!zenGoModels) return false;
+  return zenGoModels.has(modelName);
+}
+
+/**
+ * Pre-warm the Zen Go model cache by fetching from the live API.
+ * Called at proxy startup (non-blocking). Writes to ~/.claudish/zen-go-models.json.
+ * Zen Go uses a /go sub-path under the base Zen URL.
+ */
+export async function warmZenGoModelCache(): Promise<void> {
+  const apiKey = process.env.OPENCODE_API_KEY || "public";
+  const baseUrl = process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen";
+  const resp = await fetch(`${baseUrl}/go/v1/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!resp.ok) return;
+  const data = (await resp.json()) as any;
+  const models = (data.data ?? []).map((m: any) => ({ id: m.id }));
+  if (models.length === 0) return;
+
+  const cacheDir = join(homedir(), ".claudish");
+  const { mkdirSync, writeFileSync: writeSync } = await import("node:fs");
+  mkdirSync(cacheDir, { recursive: true });
+  writeSync(
+    join(cacheDir, "zen-go-models.json"),
     JSON.stringify({ models, fetchedAt: new Date().toISOString() })
   );
 }
@@ -393,7 +447,7 @@ export function getFallbackChain(modelName: string, nativeProvider: string): Fal
   }
 
   // 2. Subscription aggregator (OpenCode Zen Go — only for model families it actually serves)
-  if (process.env.OPENCODE_API_KEY && isZenCompatibleModel(modelName)) {
+  if (process.env.OPENCODE_API_KEY && isZenGoCompatibleModel(modelName)) {
     routes.push({
       provider: "opencode-zen-go",
       modelSpec: `zengo@${modelName}`,

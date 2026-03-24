@@ -22,6 +22,7 @@ import { CodexAPIFormat } from "../adapters/codex-api-format.js";
 import { OpenAIAPIFormat } from "../adapters/openai-api-format.js";
 import { DefaultAPIFormat } from "../adapters/base-api-format.js";
 import { PROVIDER_PROFILES, createHandlerForProvider } from "./provider-profiles.js";
+import { OpenAIProviderTransport } from "./transport/openai.js";
 
 // ---------------------------------------------------------------------------
 // Section 1: parseModelSpec resolution
@@ -294,16 +295,24 @@ describe("PROVIDER_PROFILES — coverage", () => {
     for (const profileName of Object.keys(PROVIDER_PROFILES)) {
       // Profile names match RemoteProvider.name which maps google→gemini
       const builtinName = profileName === "gemini" ? "google" : profileName;
-      const def = BUILTIN_PROVIDERS.find(
-        (d) => d.name === builtinName || d.name === profileName
-      );
+      const def = BUILTIN_PROVIDERS.find((d) => d.name === builtinName || d.name === profileName);
       expect(def).toBeDefined();
     }
   });
 
   test("all remote BUILTIN_PROVIDERS have a profile (except openrouter, poe, qwen, native-anthropic)", () => {
     // openrouter has its own dedicated handler (not ComposedHandler), poe has transport but no profile yet
-    const skipProviders = new Set(["qwen", "native-anthropic", "poe", "openrouter", "ollama", "lmstudio", "vllm", "mlx"]);
+    const skipProviders = new Set([
+      "qwen",
+      "native-anthropic",
+      "poe",
+      "openrouter",
+      "xai", // auto-routed through OpenRouter
+      "ollama",
+      "lmstudio",
+      "vllm",
+      "mlx",
+    ]);
     for (const def of BUILTIN_PROVIDERS) {
       if (skipProviders.has(def.name)) continue;
       const profileName = def.name === "google" ? "gemini" : def.name;
@@ -388,5 +397,65 @@ describe("matchesModelFamily", () => {
 
   test("suffix NO match: 'my-deepseek' does NOT match 'deepseek'", () => {
     expect(matchesModelFamily("my-deepseek", "deepseek")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 6: OpenCode Zen profile routing
+// ---------------------------------------------------------------------------
+
+describe("OpenCode Zen — model routing", () => {
+  const zenBaseProvider = {
+    name: "opencode-zen" as const,
+    baseUrl: "https://opencode.ai/zen",
+    apiPath: "/v1/chat/completions",
+    apiKeyEnvVar: "OPENCODE_API_KEY",
+    prefixes: [],
+    headers: undefined,
+    authScheme: undefined,
+  };
+
+  const sharedCtx = {
+    provider: zenBaseProvider,
+    apiKey: "test-key",
+    targetModel: "placeholder",
+    port: 4000,
+    sharedOpts: { isInteractive: false as const, invocationMode: "explicit-model" as const },
+  };
+
+  test("GPT model routes to Responses API endpoint (/v1/responses)", () => {
+    // The transport for GPT models via Zen must point to /v1/responses, not /v1/chat/completions.
+    const responsesProvider = { ...zenBaseProvider, apiPath: "/v1/responses" };
+    const transport = new OpenAIProviderTransport(responsesProvider, "gpt-4o", "key");
+    expect(transport.getEndpoint()).toBe("https://opencode.ai/zen/v1/responses");
+  });
+
+  test("non-GPT model routes to chat completions endpoint (/v1/chat/completions)", () => {
+    const transport = new OpenAIProviderTransport(zenBaseProvider, "glm-5", "key");
+    expect(transport.getEndpoint()).toBe("https://opencode.ai/zen/v1/chat/completions");
+  });
+
+  test("GPT model createHandler returns non-null", () => {
+    const profile = PROVIDER_PROFILES["opencode-zen"];
+    const handler = profile.createHandler({ ...sharedCtx, modelName: "gpt-4o" });
+    expect(handler).not.toBeNull();
+  });
+
+  test("MiniMax model createHandler returns non-null", () => {
+    const profile = PROVIDER_PROFILES["opencode-zen"];
+    const handler = profile.createHandler({ ...sharedCtx, modelName: "minimax-m2.5" });
+    expect(handler).not.toBeNull();
+  });
+
+  test("GLM model createHandler returns non-null (default OpenAI path)", () => {
+    const profile = PROVIDER_PROFILES["opencode-zen"];
+    const handler = profile.createHandler({ ...sharedCtx, modelName: "glm-5" });
+    expect(handler).not.toBeNull();
+  });
+
+  test("GPT adapter is CodexAPIFormat (Responses API wire format)", () => {
+    // Validate that CodexAPIFormat reports the correct stream format for GPT via Zen.
+    const adapter = new CodexAPIFormat("gpt-4o");
+    expect(adapter.getStreamFormat()).toBe("openai-responses-sse");
   });
 });

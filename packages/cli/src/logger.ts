@@ -106,8 +106,13 @@ export function structuralRedact(jsonStr: string): string {
 
 /** Keys that always carry model/user content — redact regardless of length */
 const CONTENT_KEYS = new Set([
-  "content", "reasoning_content", "text", "thinking",
-  "partial_json", "arguments", "input",
+  "content",
+  "reasoning_content",
+  "text",
+  "thinking",
+  "partial_json",
+  "arguments",
+  "input",
 ]);
 
 function redactDeep(val: any, key?: string): any {

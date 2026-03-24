@@ -478,8 +478,22 @@ describe("aggregateVerdict", () => {
   it("TEST-A1: all APPROVE → score 1.0", async () => {
     const aggregate = await getAggregate();
     const votes: VoteResult[] = [
-      { judgeId: "j1", responseId: "01", verdict: "APPROVE", confidence: 9, summary: "good", keyIssues: [] },
-      { judgeId: "j2", responseId: "01", verdict: "APPROVE", confidence: 8, summary: "good", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "01",
+        verdict: "APPROVE",
+        confidence: 9,
+        summary: "good",
+        keyIssues: [],
+      },
+      {
+        judgeId: "j2",
+        responseId: "01",
+        verdict: "APPROVE",
+        confidence: 8,
+        summary: "good",
+        keyIssues: [],
+      },
     ];
     const verdict = aggregate(votes, ["01"]);
     expect(verdict.responses["01"].score).toBe(1.0);
@@ -490,8 +504,22 @@ describe("aggregateVerdict", () => {
   it("TEST-A2: all REJECT → score 0.0", async () => {
     const aggregate = await getAggregate();
     const votes: VoteResult[] = [
-      { judgeId: "j1", responseId: "01", verdict: "REJECT", confidence: 3, summary: "bad", keyIssues: [] },
-      { judgeId: "j2", responseId: "01", verdict: "REJECT", confidence: 2, summary: "bad", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "01",
+        verdict: "REJECT",
+        confidence: 3,
+        summary: "bad",
+        keyIssues: [],
+      },
+      {
+        judgeId: "j2",
+        responseId: "01",
+        verdict: "REJECT",
+        confidence: 2,
+        summary: "bad",
+        keyIssues: [],
+      },
     ];
     const verdict = aggregate(votes, ["01"]);
     expect(verdict.responses["01"].score).toBe(0.0);
@@ -500,9 +528,30 @@ describe("aggregateVerdict", () => {
   it("TEST-A3: mixed votes → correct percentages", async () => {
     const aggregate = await getAggregate();
     const votes: VoteResult[] = [
-      { judgeId: "j1", responseId: "01", verdict: "APPROVE", confidence: 8, summary: "ok", keyIssues: [] },
-      { judgeId: "j2", responseId: "01", verdict: "APPROVE", confidence: 7, summary: "ok", keyIssues: [] },
-      { judgeId: "j3", responseId: "01", verdict: "REJECT", confidence: 4, summary: "no", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "01",
+        verdict: "APPROVE",
+        confidence: 8,
+        summary: "ok",
+        keyIssues: [],
+      },
+      {
+        judgeId: "j2",
+        responseId: "01",
+        verdict: "APPROVE",
+        confidence: 7,
+        summary: "ok",
+        keyIssues: [],
+      },
+      {
+        judgeId: "j3",
+        responseId: "01",
+        verdict: "REJECT",
+        confidence: 4,
+        summary: "no",
+        keyIssues: [],
+      },
     ];
     const verdict = aggregate(votes, ["01"]);
     // 2 approvals / (2 + 1 rejections) = 2/3
@@ -514,7 +563,14 @@ describe("aggregateVerdict", () => {
   it("TEST-A4: all ABSTAIN → score 0 (total=0 branch)", async () => {
     const aggregate = await getAggregate();
     const votes: VoteResult[] = [
-      { judgeId: "j1", responseId: "01", verdict: "ABSTAIN", confidence: 5, summary: "unclear", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "01",
+        verdict: "ABSTAIN",
+        confidence: 5,
+        summary: "unclear",
+        keyIssues: [],
+      },
     ];
     const verdict = aggregate(votes, ["01"]);
     expect(verdict.responses["01"].score).toBe(0);
@@ -524,7 +580,14 @@ describe("aggregateVerdict", () => {
   it("TEST-A5: single response works correctly", async () => {
     const aggregate = await getAggregate();
     const votes: VoteResult[] = [
-      { judgeId: "j1", responseId: "99", verdict: "APPROVE", confidence: 10, summary: "great", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "99",
+        verdict: "APPROVE",
+        confidence: 10,
+        summary: "great",
+        keyIssues: [],
+      },
     ];
     const verdict = aggregate(votes, ["99"]);
     expect(verdict.ranking).toEqual(["99"]);
@@ -535,14 +598,56 @@ describe("aggregateVerdict", () => {
     const aggregate = await getAggregate();
     const votes: VoteResult[] = [
       // "01" gets 1 approval, 1 rejection → 0.5
-      { judgeId: "j1", responseId: "01", verdict: "APPROVE", confidence: 7, summary: "ok", keyIssues: [] },
-      { judgeId: "j2", responseId: "01", verdict: "REJECT", confidence: 4, summary: "meh", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "01",
+        verdict: "APPROVE",
+        confidence: 7,
+        summary: "ok",
+        keyIssues: [],
+      },
+      {
+        judgeId: "j2",
+        responseId: "01",
+        verdict: "REJECT",
+        confidence: 4,
+        summary: "meh",
+        keyIssues: [],
+      },
       // "02" gets 2 approvals → 1.0
-      { judgeId: "j1", responseId: "02", verdict: "APPROVE", confidence: 9, summary: "great", keyIssues: [] },
-      { judgeId: "j2", responseId: "02", verdict: "APPROVE", confidence: 8, summary: "great", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "02",
+        verdict: "APPROVE",
+        confidence: 9,
+        summary: "great",
+        keyIssues: [],
+      },
+      {
+        judgeId: "j2",
+        responseId: "02",
+        verdict: "APPROVE",
+        confidence: 8,
+        summary: "great",
+        keyIssues: [],
+      },
       // "03" gets 0 approvals, 2 rejections → 0.0
-      { judgeId: "j1", responseId: "03", verdict: "REJECT", confidence: 2, summary: "bad", keyIssues: [] },
-      { judgeId: "j2", responseId: "03", verdict: "REJECT", confidence: 1, summary: "bad", keyIssues: [] },
+      {
+        judgeId: "j1",
+        responseId: "03",
+        verdict: "REJECT",
+        confidence: 2,
+        summary: "bad",
+        keyIssues: [],
+      },
+      {
+        judgeId: "j2",
+        responseId: "03",
+        verdict: "REJECT",
+        confidence: 1,
+        summary: "bad",
+        keyIssues: [],
+      },
     ];
     const verdict = aggregate(votes, ["01", "02", "03"]);
     expect(verdict.ranking[0]).toBe("02"); // score 1.0
@@ -632,7 +737,8 @@ describe("parseJudgeVotes", () => {
   it("TEST-P5: non-numeric CONFIDENCE → defaults to 5", async () => {
     const parse = await getParser();
     // Write a block where CONFIDENCE is non-numeric
-    const block = "```vote\nRESPONSE: r1\nVERDICT: APPROVE\nCONFIDENCE: high\nSUMMARY: Good\nKEY_ISSUES: None\n```";
+    const block =
+      "```vote\nRESPONSE: r1\nVERDICT: APPROVE\nCONFIDENCE: high\nSUMMARY: Good\nKEY_ISSUES: None\n```";
     writeResponse("response-01.md", block);
 
     const votes = parse(judgeDir, ["r1"]);
@@ -651,7 +757,10 @@ describe("parseJudgeVotes", () => {
 
   it("TEST-P7: KEY_ISSUES with multiple items → split correctly", async () => {
     const parse = await getParser();
-    writeResponse("response-01.md", makeVoteBlock("r1", "REJECT", "3", "Has issues", "bug in loop, off-by-one, missing test"));
+    writeResponse(
+      "response-01.md",
+      makeVoteBlock("r1", "REJECT", "3", "Has issues", "bug in loop, off-by-one, missing test")
+    );
 
     const votes = parse(judgeDir, ["r1"]);
     expect(votes[0].keyIssues).toEqual(["bug in loop", "off-by-one", "missing test"]);

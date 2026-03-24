@@ -327,6 +327,87 @@ describe("Adapter: convertMessagesToOpenAI", () => {
     expect(messages[0].tool_call_id).toBe("call_123");
     expect(messages[0].content).toBe("file contents here");
   });
+
+  test("Kimi K2.5: empty thinking block still produces reasoning_content field", async () => {
+    // Regression: Kimi rejects turn 2+ with HTTP 400 when reasoning_content is absent.
+    // This happens when the thinking block has empty-string content — the old truthiness
+    // check `if (reasoningContent)` silently dropped the field.
+    const convert = await getConverter();
+    const req = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "" },
+            {
+              type: "tool_use",
+              id: "call_abc",
+              name: "Read",
+              input: { file_path: "/tmp/foo.ts" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const messages = convert(req, "kimi-k2.5");
+    expect(messages).toHaveLength(1);
+    // reasoning_content must be present even though the text is empty
+    expect(Object.prototype.hasOwnProperty.call(messages[0], "reasoning_content")).toBe(true);
+    expect(messages[0].reasoning_content).toBe("");
+    // tool_calls should still be present
+    expect(messages[0].tool_calls).toHaveLength(1);
+    expect(messages[0].tool_calls[0].function.name).toBe("Read");
+  });
+
+  test("Kimi K2.5: non-empty thinking block produces reasoning_content with text", async () => {
+    const convert = await getConverter();
+    const req = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "Let me think about this." },
+            {
+              type: "tool_use",
+              id: "call_xyz",
+              name: "Bash",
+              input: { command: "ls" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const messages = convert(req, "kimi-k2.5");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].reasoning_content).toBe("Let me think about this.");
+    expect(messages[0].tool_calls[0].function.name).toBe("Bash");
+  });
+
+  test("no thinking blocks means no reasoning_content field", async () => {
+    const convert = await getConverter();
+    const req = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Sure." },
+            {
+              type: "tool_use",
+              id: "call_no_think",
+              name: "Read",
+              input: { file_path: "/tmp/bar.ts" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const messages = convert(req, "test-model");
+    expect(messages).toHaveLength(1);
+    expect(Object.prototype.hasOwnProperty.call(messages[0], "reasoning_content")).toBe(false);
+  });
 });
 
 describe("Adapter: AnthropicAPIFormat", () => {
@@ -696,6 +777,159 @@ describe("Structural log redaction", () => {
     const input = "[DONE]";
     const result = structuralRedact(input);
     expect(result).toBe("[DONE]");
+  });
+});
+
+// ─── sanitizeSchemaForOpenAI Tests ───────────────────────────────────────────
+
+describe("sanitizeSchemaForOpenAI", () => {
+  async function getSanitizer() {
+    const mod = await import("./handlers/shared/format/openai-tools.js");
+    return mod.sanitizeSchemaForOpenAI;
+  }
+
+  test("passes through normal object schema unchanged", async () => {
+    const sanitize = await getSanitizer();
+    const schema = {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The URL" },
+        timeout: { type: "number" },
+      },
+      required: ["url"],
+    };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+    expect(result.properties.url.type).toBe("string");
+    expect(result.required).toEqual(["url"]);
+    expect(result.oneOf).toBeUndefined();
+    expect(result.anyOf).toBeUndefined();
+  });
+
+  test("collapses top-level oneOf by picking the object branch", async () => {
+    const sanitize = await getSanitizer();
+    // browser-use pattern: oneOf at root with one object branch
+    const schema = {
+      oneOf: [
+        {
+          type: "object",
+          properties: { selector: { type: "string" } },
+          required: ["selector"],
+        },
+      ],
+    };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+    expect(result.oneOf).toBeUndefined();
+    expect(result.properties.selector.type).toBe("string");
+    expect(result.required).toEqual(["selector"]);
+  });
+
+  test("collapses top-level anyOf by picking the object branch", async () => {
+    const sanitize = await getSanitizer();
+    const schema = {
+      anyOf: [
+        { type: "string" },
+        {
+          type: "object",
+          properties: { action: { type: "string" } },
+        },
+      ],
+    };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+    expect(result.anyOf).toBeUndefined();
+    expect(result.properties.action.type).toBe("string");
+  });
+
+  test("falls back to permissive object schema when no object branch in oneOf", async () => {
+    const sanitize = await getSanitizer();
+    const schema = {
+      oneOf: [{ type: "string" }, { type: "number" }],
+    };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+    expect(result.oneOf).toBeUndefined();
+    expect(result.additionalProperties).toBe(true);
+  });
+
+  test("removes top-level enum", async () => {
+    const sanitize = await getSanitizer();
+    const schema = { type: "object", enum: ["a", "b"] };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+    expect(result.enum).toBeUndefined();
+  });
+
+  test("removes top-level not", async () => {
+    const sanitize = await getSanitizer();
+    const schema = { type: "object", not: { type: "null" } };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+    expect(result.not).toBeUndefined();
+  });
+
+  test("forces type to object even when missing", async () => {
+    const sanitize = await getSanitizer();
+    const schema = { properties: { x: { type: "string" } } };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+  });
+
+  test("preserves nested oneOf inside properties (only top-level fixed)", async () => {
+    const sanitize = await getSanitizer();
+    const schema = {
+      type: "object",
+      properties: {
+        value: {
+          oneOf: [{ type: "string" }, { type: "number" }],
+        },
+      },
+    };
+    const result = sanitize(schema);
+    expect(result.type).toBe("object");
+    // Nested oneOf inside properties should be preserved
+    expect(result.properties.value.oneOf).toBeDefined();
+    expect(result.properties.value.oneOf).toHaveLength(2);
+  });
+
+  test("removes uri format via removeUriFormat after sanitization", async () => {
+    const sanitize = await getSanitizer();
+    const schema = {
+      type: "object",
+      properties: {
+        website: { type: "string", format: "uri" },
+      },
+    };
+    const result = sanitize(schema);
+    expect(result.properties.website.format).toBeUndefined();
+  });
+
+  test("convertToolsToOpenAI sanitizes browser-use oneOf schema", async () => {
+    const { convertToolsToOpenAI } = await import("./handlers/shared/format/openai-tools.js");
+    const req = {
+      tools: [
+        {
+          name: "mcp__browser-use__browser_click",
+          description: "Click an element",
+          input_schema: {
+            oneOf: [
+              {
+                type: "object",
+                properties: { selector: { type: "string" } },
+                required: ["selector"],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const tools = convertToolsToOpenAI(req, false);
+    expect(tools).toHaveLength(1);
+    const params = tools[0].function.parameters;
+    expect(params.type).toBe("object");
+    expect(params.oneOf).toBeUndefined();
+    expect(params.properties.selector.type).toBe("string");
   });
 });
 

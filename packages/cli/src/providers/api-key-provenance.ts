@@ -124,10 +124,7 @@ export function formatProvenanceLog(p: KeyProvenance): string {
 /**
  * Format provenance for --probe TUI output (multi-line with all layers).
  */
-export function formatProvenanceProbe(
-  p: KeyProvenance,
-  indent: string = "    ",
-): string[] {
+export function formatProvenanceProbe(p: KeyProvenance, indent: string = "    "): string[] {
   const lines: string[] = [];
 
   if (!p.effectiveValue) {

@@ -104,15 +104,19 @@ function processAssistantMessage(msg: any, messages: any[], simpleFormat = false
     const toolCalls: any[] = [];
     const seen = new Set<string>();
     let reasoningContent = "";
+    let hasThinking = false;
 
     for (const block of msg.content) {
       if (block.type === "text") {
         strings.push(block.text);
       } else if (block.type === "thinking") {
-        // Accumulate thinking content to send back as reasoning_content
-        // Skip in simpleFormat (same as tool calls)
-        if (!simpleFormat && block.thinking) {
-          reasoningContent += block.thinking;
+        // Accumulate thinking content to send back as reasoning_content.
+        // Track presence regardless of content — Kimi K2.5 requires the field
+        // even when the thinking text is empty.
+        // Skip in simpleFormat (same as tool calls).
+        if (!simpleFormat) {
+          hasThinking = true;
+          reasoningContent += block.thinking || "";
         }
       } else if (block.type === "tool_use") {
         if (seen.has(block.id)) continue;
@@ -140,7 +144,10 @@ function processAssistantMessage(msg: any, messages: any[], simpleFormat = false
       if (strings.length) m.content = strings.join(" ");
       else if (toolCalls.length) m.content = null;
       if (toolCalls.length) m.tool_calls = toolCalls;
-      if (reasoningContent) m.reasoning_content = reasoningContent;
+      // Include reasoning_content whenever ANY thinking block was present,
+      // even if the concatenated text is empty — Kimi K2.5 rejects turn 2+
+      // with HTTP 400 if the field is missing after thinking was active.
+      if (hasThinking) m.reasoning_content = reasoningContent;
       if (m.content !== undefined || m.tool_calls) messages.push(m);
     }
   } else {

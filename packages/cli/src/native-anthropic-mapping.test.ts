@@ -9,7 +9,7 @@ import { parseModelSpec } from "./providers/model-parser.js";
 
 // Replicate the hasNativeAnthropicMapping logic from claude-runner.ts
 const hasNative = (models: (string | undefined)[]) =>
-  models.some(m => m && parseModelSpec(m).provider === "native-anthropic");
+  models.some((m) => m && parseModelSpec(m).provider === "native-anthropic");
 
 describe("Native Anthropic mapping detection", () => {
   describe("parseModelSpec identifies native claude models", () => {
@@ -57,19 +57,15 @@ describe("Native Anthropic mapping detection", () => {
 
   describe("hasNativeAnthropicMapping logic", () => {
     test("mixed mappings with one claude model = has native", () => {
-      expect(hasNative([
-        "claude-opus-4-6",
-        "x-ai/grok-code-fast-1",
-        "google@gemini-2.5-pro",
-      ])).toBe(true);
+      expect(hasNative(["claude-opus-4-6", "x-ai/grok-code-fast-1", "google@gemini-2.5-pro"])).toBe(
+        true
+      );
     });
 
     test("all alternative models = no native", () => {
-      expect(hasNative([
-        "x-ai/grok-code-fast-1",
-        "google@gemini-2.5-pro",
-        "minimax/minimax-m2",
-      ])).toBe(false);
+      expect(
+        hasNative(["x-ai/grok-code-fast-1", "google@gemini-2.5-pro", "minimax/minimax-m2"])
+      ).toBe(false);
     });
 
     test("undefined/missing models are skipped", () => {

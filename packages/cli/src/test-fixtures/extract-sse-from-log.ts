@@ -27,7 +27,8 @@ if (!logFile) {
   process.exit(1);
 }
 
-const outputDir = process.argv[3] || join(dirname(new URL(import.meta.url).pathname), "sse-responses");
+const outputDir =
+  process.argv[3] || join(dirname(new URL(import.meta.url).pathname), "sse-responses");
 mkdirSync(outputDir, { recursive: true });
 
 const content = readFileSync(logFile, "utf-8");
@@ -134,20 +135,25 @@ for (let i = 0; i < turns.length; i++) {
     try {
       const parsed = JSON.parse(e);
       if (parsed.choices?.[0]?.delta?.tool_calls) return true;
-      if (parsed.type === "content_block_start" && parsed.content_block?.type === "tool_use") return true;
+      if (parsed.type === "content_block_start" && parsed.content_block?.type === "tool_use")
+        return true;
       return false;
     } catch {
       return false;
     }
   }).length;
 
-  console.log(`  ${filename}: ${turn.events.length} events, ${textChunks} text chunks, ${toolCalls} tool calls`);
+  console.log(
+    `  ${filename}: ${turn.events.length} events, ${textChunks} text chunks, ${toolCalls} tool calls`
+  );
 }
 
 console.log(`\nWrote ${written} fixture file(s) to ${outputDir}`);
 
 if (written === 0) {
   console.log("\nNo [SSE:openai] or [SSE:anthropic] lines found in log.");
-  console.log("Make sure the log was captured with claudish v5.13.2+ (which includes raw SSE logging).");
+  console.log(
+    "Make sure the log was captured with claudish v5.13.2+ (which includes raw SSE logging)."
+  );
   console.log("Re-run with: claudish --model <model> --debug ...");
 }

@@ -1,196 +1,327 @@
-/** @jsxImportSource @opentui/react */
-import { createCliRenderer } from "@opentui/core";
-import type { CliRenderer } from "@opentui/core";
-import { createRoot } from "@opentui/react";
-import { createElement } from "react";
-import { writeSync } from "node:fs";
-import { DiagPanel } from "./tui/DiagPanel.js";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import type { WriteStream } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 /**
- * A diagnostic message with severity level.
+ * MtmDiagRunner spawns Claude Code inside mtm — a real terminal multiplexer.
+ *
+ * Layout:
+ *   Top pane  (~97%): Claude Code with a REAL PTY — mtm owns the terminal
+ *   Bottom pane (~1 line): claudish status bar (model, errors)
+ *
+ * mtm is launched with:
+ *   mtm -e "claude args..." -s 3 -b "status watcher"
+ *
+ * Diagnostics are written to ~/.claudish/diag-<PID>.log.
+ * Status bar is updated via ~/.claudish/status-<PID>.txt.
  */
+export class MtmDiagRunner {
+  private mtmProc: ChildProcess | null = null;
+  private logPath: string;
+  private statusPath: string;
+  private logStream: WriteStream | null = null;
+
+  constructor() {
+    const dir = join(homedir(), ".claudish");
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      // Already exists
+    }
+    this.logPath = join(dir, `diag-${process.pid}.log`);
+    this.statusPath = join(dir, `status-${process.pid}.txt`);
+    this.logStream = createWriteStream(this.logPath, { flags: "w" });
+    this.logStream.on("error", () => {}); // Best-effort
+    // Initialize status bar — must end with newline for tail -f -n1 to display
+    try {
+      writeFileSync(this.statusPath, renderStatusBar({ model: "", provider: "", errorCount: 0, lastError: "" }) + "\n");
+    } catch {}
+  }
+
+  /**
+   * Launch mtm with Claude Code in the top pane. Returns the exit code when
+   * mtm exits (which happens when Claude Code exits, closing the last pane).
+   *
+   * @param claudeCommand  Full path to the claude binary
+   * @param claudeArgs     Arguments to pass to claude
+   * @param env            Environment variables for the claude process
+   */
+  async run(
+    claudeCommand: string,
+    claudeArgs: string[],
+    env: Record<string, string>
+  ): Promise<number> {
+    const mtmBin = this.findMtmBinary();
+
+    // Build the claude command — just the binary + args, no env vars inline.
+    // Environment is passed via spawn's env option (inherited by mtm's child panes).
+    const quotedArgs = claudeArgs.map((a) => shellQuote(a)).join(" ");
+    const claudeCmd = `${shellQuote(claudeCommand)} ${quotedArgs}`;
+
+    // Merge claudish env overrides with current process env.
+    // mtm inherits this env and passes it to child panes (both top and bottom).
+    const mergedEnv = { ...process.env, ...env } as Record<string, string>;
+
+    // Launch mtm:
+    // -e claudeCmd  : run claude in the main pane
+    // -S statusPath : render status bar on the last row (not a pane, just 1 ncurses line)
+    // stdio: inherit — mtm gets direct terminal access
+    this.mtmProc = spawn(mtmBin, ["-e", claudeCmd, "-S", this.statusPath], {
+      stdio: "inherit",
+      env: mergedEnv,
+    });
+
+    const exitCode = await new Promise<number>((resolve) => {
+      this.mtmProc!.on("exit", (code) => resolve(code ?? 1));
+      this.mtmProc!.on("error", () => resolve(1));
+    });
+
+    this.cleanup();
+    return exitCode;
+  }
+
+  /**
+   * Write a diagnostic message to the log file AND update the status bar.
+   */
+  write(msg: string): void {
+    if (!this.logStream) return;
+    const timestamp = new Date().toISOString();
+    try {
+      this.logStream.write(`[${timestamp}] ${msg}\n`);
+    } catch {
+      // Ignore write errors — diag output is best-effort
+    }
+    // Parse and track errors
+    const parsed = parseLogMessage(msg);
+    if (parsed.isError) {
+      this.errorCount++;
+      this.lastError = parsed.short;
+      if (parsed.provider) this.provider = parsed.provider;
+    }
+    this.refreshStatusBar();
+  }
+
+  /** Current status bar state */
+  private modelName = "";
+  private provider = "";
+  private lastError = "";
+  private errorCount = 0;
+
+  /**
+   * Set the model name shown in the status bar.
+   */
+  setModel(name: string): void {
+    // Strip vendor prefix: "openrouter/hunter-alpha" → "hunter-alpha"
+    this.modelName = name.includes("/") ? name.split("/").pop()! : name;
+    // Extract provider from prefix if present
+    if (name.includes("@")) {
+      this.provider = name.split("@")[0];
+    } else if (name.includes("/")) {
+      this.provider = name.split("/")[0];
+    }
+    this.refreshStatusBar();
+  }
+
+  /**
+   * Render and write the ANSI-formatted status bar to the status file.
+   */
+  private refreshStatusBar(): void {
+    const bar = renderStatusBar({
+      model: this.modelName,
+      provider: this.provider,
+      errorCount: this.errorCount,
+      lastError: this.lastError,
+    });
+    try {
+      // Append new line — tail -f picks it up and shows the latest
+      appendFileSync(this.statusPath, bar + "\n");
+    } catch {
+      // Best-effort
+    }
+  }
+
+  /**
+   * Get the diag log file path for this session.
+   */
+  getLogPath(): string {
+    return this.logPath;
+  }
+
+  /**
+   * Clean up: close the log stream and remove the ephemeral log file.
+   */
+  cleanup(): void {
+    if (this.logStream) {
+      try {
+        this.logStream.end();
+      } catch {
+        // Ignore
+      }
+      this.logStream = null;
+    }
+    try { unlinkSync(this.logPath); } catch {}
+    try { unlinkSync(this.statusPath); } catch {}
+    if (this.mtmProc) {
+      try {
+        this.mtmProc.kill();
+      } catch {
+        // Process may already be gone
+      }
+      this.mtmProc = null;
+    }
+  }
+
+  /**
+   * Find the mtm binary. Priority:
+   * 1. Bundled platform-specific binary (native/mtm/mtm-<platform>-<arch>)
+   * 2. Built binary in source tree (native/mtm/mtm) — for development
+   * 3. mtm in PATH
+   */
+  findMtmBinary(): string {
+    // Resolve __dirname equivalent for ESM
+    const thisFile = fileURLToPath(import.meta.url);
+    const thisDir = dirname(thisFile);
+
+    const platform = process.platform;
+    const arch = process.arch;
+
+    // 1. Platform-specific bundled binary (distributed with npm package)
+    const bundledPlatform = join(thisDir, "..", "..", "native", "mtm", `mtm-${platform}-${arch}`);
+    if (existsSync(bundledPlatform)) return bundledPlatform;
+
+    // 2. Generic built binary (dev mode — run `make` in packages/cli/native/mtm/)
+    const builtDev = join(thisDir, "..", "native", "mtm", "mtm");
+    if (existsSync(builtDev)) return builtDev;
+
+    // 3. mtm in PATH
+    try {
+      const result = execSync("which mtm", { encoding: "utf-8" }).trim();
+      if (result) return result;
+    } catch {
+      // Not in PATH
+    }
+
+    throw new Error("mtm binary not found. Build it with: cd packages/cli/native/mtm && make");
+  }
+}
+
+/**
+ * Shell-quote a string so it can be safely embedded in a shell command.
+ */
+function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+interface StatusBarState {
+  model: string;
+  provider: string;
+  errorCount: number;
+  lastError: string;
+}
+
+/**
+ * Render the status bar in mtm's tab-separated format.
+ * Each segment: "COLOR:text" separated by tabs.
+ * Colors: M=magenta, C=cyan, G=green, R=red, D=dim, W=white
+ * mtm renders each segment as a colored pill using ncurses.
+ */
+function renderStatusBar(state: StatusBarState): string {
+  const { model, provider, errorCount, lastError } = state;
+
+  const parts: string[] = [];
+
+  parts.push("M: claudish ");
+  if (model) parts.push(`C: ${model} `);
+  if (provider) parts.push(`D: ${provider} `);
+
+  if (errorCount > 0) {
+    const errLabel = errorCount === 1 ? " ⚠ 1 error " : ` ⚠ ${errorCount} errors `;
+    parts.push(`R:${errLabel}`);
+    if (lastError) parts.push(`D: ${lastError} `);
+  } else {
+    parts.push("G: ● ok ");
+  }
+
+  return parts.join("\t");
+}
+
+/**
+ * Parse a logStderr message into a short, human-readable form.
+ */
+function parseLogMessage(msg: string): { isError: boolean; short: string; provider?: string } {
+  // Extract provider name: "Error [OpenRouter]: ..."
+  const providerMatch = msg.match(/\[(\w+)\]/);
+  const provider = providerMatch?.[1];
+
+  // HTTP status errors — extract the human-readable part
+  const httpMatch = msg.match(/HTTP (\d{3})/);
+  if (httpMatch) {
+    // Try to extract error message from JSON body
+    const jsonMatch = msg.match(/"message"\s*:\s*"([^"]+)"/);
+    if (jsonMatch?.[1]) {
+      const detail = jsonMatch[1]
+        .replace(/is not a valid model ID/, "invalid model")
+        .replace(/Provider returned error/, "provider error");
+      return { isError: true, short: detail, provider };
+    }
+    // Extract the hint after "HTTP NNN. "
+    const hintMatch = msg.match(/HTTP \d{3}\.\s*(.+?)\.?\s*$/);
+    if (hintMatch?.[1]) {
+      return { isError: true, short: hintMatch[1], provider };
+    }
+    return { isError: true, short: `HTTP ${httpMatch[1]}`, provider };
+  }
+
+  // Fallback chain messages
+  if (msg.includes("[Fallback]")) {
+    const countMatch = msg.match(/(\d+) provider/);
+    return { isError: false, short: `fallback: ${countMatch?.[1] || "?"} providers`, provider };
+  }
+
+  // Generic error
+  if (msg.toLowerCase().includes("error")) {
+    // Trim to key part
+    const short = msg.replace(/^Error\s*\[\w+\]:\s*/, "").replace(/\.\s*$/, "");
+    return { isError: true, short: short.length > 40 ? short.slice(0, 39) + "…" : short, provider };
+  }
+
+  return { isError: false, short: msg.length > 40 ? msg.slice(0, 39) + "…" : msg };
+}
+
+/**
+ * Try to create an MtmDiagRunner. Returns null if mtm binary is not available.
+ */
+export async function tryCreateMtmRunner(): Promise<MtmDiagRunner | null> {
+  try {
+    const runner = new MtmDiagRunner();
+    // Verify we can find the mtm binary before committing
+    runner.findMtmBinary();
+    return runner;
+  } catch {
+    return null;
+  }
+}
+
+// Re-export DiagMessage interface for use by other modules
 export interface DiagMessage {
   text: string;
   level: "error" | "warn" | "info";
 }
 
 /**
- * PtyDiagRunner spawns Claude Code inside a PTY using Bun's native
- * Bun.spawn({ terminal }). Output goes directly to fd 1 via writeSync,
- * giving Claude Code clean, uninterrupted terminal rendering.
- *
- * The opentui renderer is NOT created at startup — it's lazily initialized
- * only when the first diagnostic message needs to be shown. This prevents
- * opentui from interfering with Claude Code's ink TUI during normal operation.
+ * PtyDiagRunner is kept as a type alias for backward compatibility.
+ * New code should use MtmDiagRunner directly.
+ * @deprecated Use MtmDiagRunner
  */
-export class PtyDiagRunner {
-  private renderer: CliRenderer | null = null;
-  private bunProc: ReturnType<typeof Bun.spawn> | null = null;
-  private messages: DiagMessage[] = [];
-  private autoHideTimer: ReturnType<typeof setTimeout> | null = null;
-  private reactRoot: ReturnType<typeof createRoot> | null = null;
-  private rawStdinHandler: ((chunk: Buffer | string) => void) | null = null;
-  private rendererInitializing = false;
-
-  /**
-   * Spawn the given command as a PTY child.
-   * Pure passthrough — no opentui, no interference.
-   * opentui is only initialized lazily when showDiag() is called.
-   */
-  async run(command: string, args: string[], env: Record<string, string>): Promise<number> {
-    const cols = process.stdout.columns || 80;
-    const rows = process.stdout.rows || 24;
-
-    // Spawn Claude Code in a PTY. Output goes directly to fd 1,
-    // completely bypassing any stdout interception.
-    this.bunProc = Bun.spawn([command, ...args], {
-      terminal: {
-        cols,
-        rows,
-        data: (_terminal: unknown, data: Buffer | string) => {
-          const buf = typeof data === "string" ? Buffer.from(data, "binary") : data;
-          writeSync(1, buf);
-        },
-      },
-      cwd: process.cwd(),
-      env,
-    });
-
-    // Forward raw stdin to the PTY. During the first 2 seconds, drop ALL
-    // escape sequences — these are terminal capability responses from tmux
-    // (DCS, DA1, DECRPM) triggered by Claude Code's ink startup probing.
-    // If forwarded to the PTY, they echo as visible garbage in the prompt.
-    // After the grace period, forward everything (escape sequences are then
-    // user input like arrow keys, function keys, etc.).
-    const startTime = Date.now();
-    const GRACE_PERIOD_MS = 2000;
-
-    this.rawStdinHandler = (chunk: Buffer | string) => {
-      if (!this.bunProc?.terminal) return;
-      const str = typeof chunk === "string" ? chunk : chunk.toString("binary");
-
-      // During grace period: drop any chunk containing ESC sequences
-      // (terminal responses arrive as ESC + control sequences)
-      if (Date.now() - startTime < GRACE_PERIOD_MS) {
-        if (str.includes("\x1b")) return; // drop all escape sequences during startup
-        // Non-escape input passes through (rare during startup, but safe)
-      }
-
-      this.bunProc.terminal.write(str);
-    };
-    process.stdin.on("data", this.rawStdinHandler);
-
-    // Handle terminal resize
-    const resizeHandler = () => {
-      if (this.bunProc?.terminal) {
-        try {
-          this.bunProc.terminal.resize(
-            process.stdout.columns || 80,
-            process.stdout.rows || 24
-          );
-        } catch {
-          // non-fatal
-        }
-      }
-    };
-    process.on("SIGWINCH", resizeHandler);
-
-    // Wait for the PTY child to exit
-    await this.bunProc.exited;
-    const exitCode = this.bunProc.exitCode ?? 1;
-
-    process.removeListener("SIGWINCH", resizeHandler);
-    this.cleanup();
-
-    return exitCode;
-  }
-
-  /**
-   * Show the diagnostic bar. Lazily initializes opentui renderer on first call.
-   * During normal operation, no opentui renderer exists — zero interference
-   * with Claude Code's ink TUI.
-   */
-  async showDiag(messages: DiagMessage[]): Promise<void> {
-    this.messages = messages.slice(-4);
-
-    // Lazy init: create opentui renderer only when first needed
-    if (!this.renderer && !this.rendererInitializing) {
-      this.rendererInitializing = true;
-      try {
-        this.renderer = await createCliRenderer({
-          useAlternateScreen: false,
-          experimental_splitHeight: 5,
-          exitOnCtrlC: false,
-          useMouse: false,
-          useKittyKeyboard: null,
-          targetFps: 10,
-        });
-
-        this.reactRoot = createRoot(this.renderer);
-        this.renderDiagPanel();
-      } catch {
-        this.rendererInitializing = false;
-        return;
-      }
-      this.rendererInitializing = false;
-    } else if (this.renderer) {
-      if (this.renderer.experimental_splitHeight === 0) {
-        this.renderer.experimental_splitHeight = 5;
-      }
-      this.renderDiagPanel();
-    }
-
-    // Reset auto-hide timer
-    if (this.autoHideTimer) clearTimeout(this.autoHideTimer);
-    this.autoHideTimer = setTimeout(() => this.hideDiag(), 10000);
-  }
-
-  hideDiag(): void {
-    if (!this.renderer) return;
-    if (this.autoHideTimer) {
-      clearTimeout(this.autoHideTimer);
-      this.autoHideTimer = null;
-    }
-    this.renderer.experimental_splitHeight = 0;
-  }
-
-  private renderDiagPanel(): void {
-    if (!this.reactRoot) return;
-    this.reactRoot.render(createElement(DiagPanel, { messages: this.messages }));
-  }
-
-  cleanup(): void {
-    if (this.autoHideTimer) {
-      clearTimeout(this.autoHideTimer);
-      this.autoHideTimer = null;
-    }
-    if (this.rawStdinHandler) {
-      process.stdin.removeListener("data", this.rawStdinHandler);
-      this.rawStdinHandler = null;
-    }
-    if (this.bunProc) {
-      try { this.bunProc.kill(); } catch {}
-      try { this.bunProc.terminal?.close(); } catch {}
-      this.bunProc = null;
-    }
-    if (this.renderer && !this.renderer.isDestroyed) {
-      try { this.renderer.destroy(); } catch {}
-      this.renderer = null;
-    }
-  }
-}
+export { MtmDiagRunner as PtyDiagRunner };
 
 /**
- * Try to create a PtyDiagRunner. Returns null if Bun's terminal API
- * is not available (e.g., running under Node.js, or on Windows).
+ * tryCreatePtyRunner is kept for backward compatibility with index.ts.
+ * @deprecated Use tryCreateMtmRunner
  */
-export async function tryCreatePtyRunner(): Promise<PtyDiagRunner | null> {
-  try {
-    if (typeof Bun === "undefined") return null;
-    const test = Bun.spawn(["true"], { terminal: { cols: 1, rows: 1 } });
-    await test.exited;
-    return new PtyDiagRunner();
-  } catch {
-    return null;
-  }
-}
+export const tryCreatePtyRunner = tryCreateMtmRunner;

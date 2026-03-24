@@ -86,11 +86,7 @@ export function validateSessionPath(sessionPath: string): string {
  * Setup a new team session.
  * Creates directory structure, writes input.md, generates a shuffled manifest.
  */
-export function setupSession(
-  sessionPath: string,
-  models: string[],
-  input?: string
-): TeamManifest {
+export function setupSession(sessionPath: string, models: string[], input?: string): TeamManifest {
   if (models.length === 0) {
     throw new Error("At least one model is required");
   }
@@ -196,14 +192,7 @@ export async function runModels(
 
     // CRITICAL FIX: do NOT use -p flag (-p means --profile in claudish)
     // --stdin triggers non-interactive single-shot mode
-    const args = [
-      "--model",
-      entry.model,
-      "-y",
-      "--stdin",
-      "--quiet",
-      ...(opts.claudeFlags ?? []),
-    ];
+    const args = ["--model", entry.model, "-y", "--stdin", "--quiet", ...(opts.claudeFlags ?? [])];
 
     updateModelStatus(anonId, {
       state: "RUNNING",
@@ -506,10 +495,8 @@ function formatVerdict(verdict: TeamVerdict, sessionPath: string): string {
 
   let output = "# Team Verdict\n\n";
   output += "## Ranking\n\n";
-  output +=
-    "| Rank | Response | Model | Score | Approvals | Rejections | Abstentions |\n";
-  output +=
-    "|------|----------|-------|-------|-----------|------------|-------------|\n";
+  output += "| Rank | Response | Model | Score | Approvals | Rejections | Abstentions |\n";
+  output += "|------|----------|-------|-------|-----------|------------|-------------|\n";
 
   for (let i = 0; i < verdict.ranking.length; i++) {
     const id = verdict.ranking[i];
@@ -521,8 +508,7 @@ function formatVerdict(verdict: TeamVerdict, sessionPath: string): string {
 
   output += "\n## Individual Votes\n\n";
   for (const vote of verdict.votes) {
-    const issueStr =
-      vote.keyIssues.length > 0 ? ` Issues: ${vote.keyIssues.join(", ")}.` : "";
+    const issueStr = vote.keyIssues.length > 0 ? ` Issues: ${vote.keyIssues.join(", ")}.` : "";
     output += `- **Judge ${vote.judgeId}** -> Response ${vote.responseId}: **${vote.verdict}** (${vote.confidence}/10) — ${vote.summary}${issueStr}\n`;
   }
 

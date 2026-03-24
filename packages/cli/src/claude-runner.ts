@@ -6,7 +6,9 @@ import { join, basename } from "node:path";
 import { ENV } from "./config.js";
 import type { ClaudishConfig } from "./types.js";
 import { parseModelSpec } from "./providers/model-parser.js";
-import type { PtyDiagRunner } from "./pty-diag-runner.js";
+import type { MtmDiagRunner } from "./pty-diag-runner.js";
+// Backward-compat alias
+type PtyDiagRunner = MtmDiagRunner;
 
 /**
  * Check if any resolved model mapping targets a native Anthropic model (claude-*).
@@ -14,8 +16,14 @@ import type { PtyDiagRunner } from "./pty-diag-runner.js";
  * subscription credentials so NativeHandler can forward them to api.anthropic.com.
  */
 function hasNativeAnthropicMapping(config: ClaudishConfig): boolean {
-  const models = [config.model, config.modelOpus, config.modelSonnet, config.modelHaiku, config.modelSubagent];
-  return models.some(m => m && parseModelSpec(m).provider === "native-anthropic");
+  const models = [
+    config.model,
+    config.modelOpus,
+    config.modelSonnet,
+    config.modelHaiku,
+    config.modelSubagent,
+  ];
+  return models.some((m) => m && parseModelSpec(m).provider === "native-anthropic");
 }
 
 // Use process.platform directly to ensure runtime evaluation
@@ -404,17 +412,18 @@ export async function runClaudeWithProxy(
   }
 
   // Spawn claude CLI process.
-  // PTY path: when ptyDiagRunner is available in interactive mode, spawn via Bun's
-  // native PTY. This routes Claude Code's output through process.stdout.write so
-  // opentui can intercept it and show the diagnostic split-panel.
-  // Fallback path: standard stdio: 'inherit' spawn (non-interactive or no PTY).
+  // MTM path: when ptyDiagRunner (MtmDiagRunner) is available in interactive mode,
+  // delegate spawning to mtm. mtm launches with `stdio: inherit`, takes over the
+  // terminal, runs Claude Code in the top pane (real PTY), and shows diagnostics
+  // in the bottom pane via tail -f on the diag log.
+  // Fallback path: standard stdio: 'inherit' spawn (non-interactive or no mtm).
   const needsShell = isWindows() && claudeBinary.endsWith(".cmd");
   const spawnCommand = needsShell ? `"${claudeBinary}"` : claudeBinary;
 
   let exitCode: number;
 
   if (config.interactive && ptyDiagRunner) {
-    // PTY path: feeds opentui splitHeight capture
+    // MTM path: mtm handles terminal setup and launches Claude Code
     exitCode = await ptyDiagRunner.run(spawnCommand, claudeArgs, env);
 
     // Clean up temporary settings file

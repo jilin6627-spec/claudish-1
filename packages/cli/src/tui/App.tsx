@@ -36,7 +36,13 @@ export function App() {
   const [inputValue, setInputValue] = useState("");
   const [routingPattern, setRoutingPattern] = useState("");
   const [routingChain, setRoutingChain] = useState("");
+  const [chainSelected, setChainSelected] = useState<Set<string>>(new Set());
+  const [chainOrder, setChainOrder] = useState<string[]>([]);
+  const [chainCursor, setChainCursor] = useState(0);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  // Chain selector uses same PROVIDERS list for consistent naming
+  const CHAIN_PROVIDERS = PROVIDERS;
 
   const quit = useCallback(() => renderer.destroy(), [renderer]);
 
@@ -119,33 +125,77 @@ export function App() {
 
     if (mode === "add_routing_pattern") {
       if (key.name === "return" || key.name === "enter") {
-        if (routingPattern.trim()) setMode("add_routing_chain");
+        if (routingPattern.trim()) {
+          setChainSelected(new Set());
+          setChainCursor(0);
+          setChainOrder([]);
+          setMode("add_routing_chain");
+        }
       } else if (key.name === "escape") {
+        setRoutingPattern("");
         setMode("browse");
+      } else if (key.name === "backspace" || key.name === "delete") {
+        setRoutingPattern((p) => p.slice(0, -1));
+      } else if (key.raw && key.raw.length === 1 && !key.ctrl && !key.meta) {
+        setRoutingPattern((p) => p + key.raw);
       }
       return;
     }
 
     if (mode === "add_routing_chain") {
-      if (key.name === "return" || key.name === "enter") {
+      if (key.name === "up" || key.name === "k") {
+        setChainCursor((i) => Math.max(0, i - 1));
+      } else if (key.name === "down" || key.name === "j") {
+        setChainCursor((i) => Math.min(CHAIN_PROVIDERS.length - 1, i + 1));
+      } else if (key.name === "space" || key.raw === " ") {
+        // Toggle: add to end or remove
+        const provName = CHAIN_PROVIDERS[chainCursor].name;
+        setChainSelected((prev) => {
+          const next = new Set(prev);
+          if (next.has(provName)) {
+            next.delete(provName);
+            setChainOrder((o) => o.filter((p) => p !== provName));
+          } else {
+            next.add(provName);
+            setChainOrder((o) => [...o, provName]);
+          }
+          return next;
+        });
+      } else if (key.raw && key.raw >= "1" && key.raw <= "9") {
+        // Number key: move current provider to that position in chain
+        const provName = CHAIN_PROVIDERS[chainCursor].name;
+        const targetPos = parseInt(key.raw, 10) - 1; // 0-indexed
+        setChainSelected((prev) => {
+          const next = new Set(prev);
+          next.add(provName);
+          return next;
+        });
+        setChainOrder((prev) => {
+          const without = prev.filter((p) => p !== provName);
+          const insertAt = Math.min(targetPos, without.length);
+          without.splice(insertAt, 0, provName);
+          return without;
+        });
+      } else if (key.name === "return" || key.name === "enter") {
         const pat = routingPattern.trim();
-        const ch = routingChain
-          .trim()
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (pat && ch.length) {
+        if (pat && chainOrder.length) {
           const cfg = loadConfig();
           if (!cfg.routing) cfg.routing = {};
-          cfg.routing[pat] = ch;
+          cfg.routing[pat] = chainOrder;
           saveConfig(cfg);
           refreshConfig();
-          setStatusMsg(`Rule added for '${pat}'.`);
+          setStatusMsg(`Rule added: ${pat} → ${chainOrder.join(", ")}`);
         }
         setRoutingPattern("");
         setRoutingChain("");
+        setChainSelected(new Set());
+        setChainOrder([]);
+        setChainCursor(0);
         setMode("browse");
       } else if (key.name === "escape") {
+        setChainSelected(new Set());
+        setChainOrder([]);
+        setChainCursor(0);
         setMode("add_routing_pattern");
       }
       return;
@@ -287,7 +337,7 @@ export function App() {
   const HEADER_H = 1;
   const TABS_H = 3;
   const FOOTER_H = 1;
-  const DETAIL_H = 5;
+  const DETAIL_H = 7;
   const contentH = Math.max(4, height - HEADER_H - TABS_H - DETAIL_H - FOOTER_H - 1);
 
   // ── Render helpers ────────────────────────────────────────────────────────
@@ -380,7 +430,10 @@ export function App() {
           {isFirstUnready && (
             <box height={1} paddingX={1}>
               <text>
-                <span fg={C.dim}>{"─ not configured "}{"─".repeat(Math.max(0, width - 22))}</span>
+                <span fg={C.dim}>
+                  {"─ not configured "}
+                  {"─".repeat(Math.max(0, width - 22))}
+                </span>
               </text>
             </box>
           )}
@@ -393,7 +446,9 @@ export function App() {
               </span>
               <span fg={C.dim}>{"  "}</span>
               {isReady ? (
-                <span fg={C.green} bold>{"ready  "}</span>
+                <span fg={C.green} bold>
+                  {"ready  "}
+                </span>
               ) : (
                 <span fg={C.dim}>{"not set"}</span>
               )}
@@ -421,10 +476,18 @@ export function App() {
         {/* Column header */}
         <text>
           <span fg={C.dim}>{"   "}</span>
-          <span fg={C.blue} bold>{"PROVIDER        "}</span>
-          <span fg={C.blue} bold>{"STATUS    "}</span>
-          <span fg={C.blue} bold>{"KEY         "}</span>
-          <span fg={C.blue} bold>DESCRIPTION</span>
+          <span fg={C.blue} bold>
+            {"PROVIDER        "}
+          </span>
+          <span fg={C.blue} bold>
+            {"STATUS    "}
+          </span>
+          <span fg={C.blue} bold>
+            {"KEY         "}
+          </span>
+          <span fg={C.blue} bold>
+            DESCRIPTION
+          </span>
         </text>
         {displayProviders.slice(0, listH).map(getRow)}
       </box>
@@ -447,14 +510,20 @@ export function App() {
           paddingX={1}
         >
           <text>
-            <span fg={C.green} bold>Enter </span>
+            <span fg={C.green} bold>
+              Enter{" "}
+            </span>
             <span fg={C.fgMuted}>to save · </span>
-            <span fg={C.red} bold>Esc </span>
+            <span fg={C.red} bold>
+              Esc{" "}
+            </span>
             <span fg={C.fgMuted}>to cancel</span>
           </text>
           <box flexDirection="row">
             <text>
-              <span fg={C.green} bold>&gt; </span>
+              <span fg={C.green} bold>
+                &gt;{" "}
+              </span>
             </text>
             <input
               value={inputValue}
@@ -482,33 +551,45 @@ export function App() {
       >
         <box flexDirection="row">
           <text>
-            <span fg={C.blue} bold>Status: </span>
+            <span fg={C.blue} bold>
+              Status:{" "}
+            </span>
             {hasKey ? (
-              <span fg={C.green} bold>● Ready</span>
+              <span fg={C.green} bold>
+                ● Ready
+              </span>
             ) : (
               <span fg={C.fgMuted}>○ Not configured</span>
             )}
             <span fg={C.dim}>{"    "}</span>
-            <span fg={C.blue} bold>Key: </span>
+            <span fg={C.blue} bold>
+              Key:{" "}
+            </span>
             <span fg={C.green}>{displayKey}</span>
             {keySrc && <span fg={C.fgMuted}> (source: {keySrc})</span>}
           </text>
         </box>
         {selectedProvider.endpointEnvVar && (
           <text>
-            <span fg={C.blue} bold>URL:     </span>
+            <span fg={C.blue} bold>
+              URL:{" "}
+            </span>
             <span fg={C.cyan}>
               {activeEndpoint || selectedProvider.defaultEndpoint || "default"}
             </span>
           </text>
         )}
         <text>
-          <span fg={C.blue} bold>Desc:    </span>
+          <span fg={C.blue} bold>
+            Desc:{" "}
+          </span>
           <span fg={C.white}>{selectedProvider.description}</span>
         </text>
         {selectedProvider.keyUrl && (
           <text>
-            <span fg={C.blue} bold>Get Key: </span>
+            <span fg={C.blue} bold>
+              Get Key:{" "}
+            </span>
             <span fg={C.cyan}>{selectedProvider.keyUrl}</span>
           </text>
         )}
@@ -536,30 +617,47 @@ export function App() {
         flexDirection="column"
         paddingX={1}
       >
-        {/* Default chain — dimmed, not editable */}
+        {/* Default chain — bordered subsection */}
         <text>
-          <span fg={C.dim}>{"  *  "}</span>
-          <span fg={C.fgMuted}>{"LiteLLM → Zen Go → Subscription → Provider Direct → OpenRouter"}</span>
-          <span fg={C.dim}>{" (built-in)"}</span>
+          <span fg={C.blue} bold>{" Default fallback chain:"}</span>
         </text>
-        <text> </text>
+        <text>
+          <span fg={C.dim}>{" "}</span>
+          <span fg={C.cyan}>{"LiteLLM"}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"Zen Go"}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"Subscription"}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"Provider Direct"}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"OpenRouter"}</span>
+        </text>
+        <text>
+          <span fg={C.dim}>{" ─".repeat(Math.max(1, Math.floor((width - 6) / 2)))}</span>
+        </text>
         {/* Custom rules header */}
         <text>
-          <span fg={C.blue} bold>{"  PATTERN         CHAIN"}</span>
+          <span fg={C.blue} bold>{" Custom rules:"}</span>
+          <span fg={C.fgMuted}>{"  (override default for matching models)"}</span>
         </text>
         {/* Custom rules or empty state */}
         {ruleEntries.length === 0 && !isRoutingInput && (
           <text>
-            <span fg={C.fgMuted}>{"  No custom rules. Press "}</span>
+            <span fg={C.fgMuted}>{" None configured. Press "}</span>
             <span fg={C.green} bold>a</span>
-            <span fg={C.fgMuted}>{" to add one."}</span>
+            <span fg={C.fgMuted}>{" to add."}</span>
           </text>
         )}
         {ruleEntries.length > 0 && (
           <>
             <text>
-              <span fg={C.blue} bold>{"PATTERN         "}</span>
-              <span fg={C.blue} bold>{"CHAIN"}</span>
+              <span fg={C.blue} bold>
+                {"PATTERN         "}
+              </span>
+              <span fg={C.blue} bold>
+                {"CHAIN"}
+              </span>
             </text>
             {ruleEntries.slice(0, Math.max(0, innerH - 3)).map(([pat, chain], idx) => {
               const sel = idx === providerIndex;
@@ -587,26 +685,22 @@ export function App() {
         {mode === "add_routing_pattern" && (
           <box flexDirection="column">
             <text>
-              <span fg={C.blue} bold>Pattern </span>
-              <span fg={C.dim}>(e.g. kimi-*, gpt-4o):</span>
+              <span fg={C.blue} bold>{"Pattern "}</span>
+              <span fg={C.dim}>{"(e.g. kimi-*, gpt-4o):"}</span>
             </text>
-            <box flexDirection="row">
-              <text>
-                <span fg={C.green} bold>&gt; </span>
-              </text>
-              <input
-                value={routingPattern}
-                onChange={setRoutingPattern}
-                focused={true}
-                width={width - 8}
-                backgroundColor={C.bgHighlight}
-                textColor={C.white}
-              />
-            </box>
             <text>
-              <span fg={C.green} bold>Enter </span>
+              <span fg={C.green} bold>{"> "}</span>
+              <span fg={C.white}>{routingPattern}</span>
+              <span fg={C.cyan}>{"█"}</span>
+            </text>
+            <text>
+              <span fg={C.green} bold>
+                Enter{" "}
+              </span>
               <span fg={C.fgMuted}>to continue · </span>
-              <span fg={C.red} bold>Esc </span>
+              <span fg={C.red} bold>
+                Esc{" "}
+              </span>
               <span fg={C.fgMuted}>to cancel</span>
             </text>
           </box>
@@ -614,29 +708,40 @@ export function App() {
         {mode === "add_routing_chain" && (
           <box flexDirection="column">
             <text>
-              <span fg={C.blue} bold>Chain for </span>
+              <span fg={C.blue} bold>{"Select providers for "}</span>
               <span fg={C.white} bold>{routingPattern}</span>
-              <span fg={C.dim}> (comma-separated providers):</span>
+              <span fg={C.dim}>{" (Space=toggle, 1-9=set position, Enter=save)"}</span>
             </text>
-            <box flexDirection="row">
+            {chainOrder.length > 0 && (
               <text>
-                <span fg={C.green} bold>&gt; </span>
+                <span fg={C.fgMuted}>{"  Chain: "}</span>
+                <span fg={C.cyan}>{chainOrder.join(" → ")}</span>
               </text>
-              <input
-                value={routingChain}
-                onChange={setRoutingChain}
-                focused={true}
-                width={width - 8}
-                backgroundColor={C.bgHighlight}
-                textColor={C.white}
-              />
-            </box>
-            <text>
-              <span fg={C.green} bold>Enter </span>
-              <span fg={C.fgMuted}>to save · </span>
-              <span fg={C.red} bold>Esc </span>
-              <span fg={C.fgMuted}>to go back</span>
-            </text>
+            )}
+            {CHAIN_PROVIDERS.map((prov, idx) => {
+              const isCursor = idx === chainCursor;
+              const isOn = chainSelected.has(prov.name);
+              const pos = isOn ? chainOrder.indexOf(prov.name) + 1 : 0;
+              const hasKey = !!(config.apiKeys?.[prov.apiKeyEnvVar] || process.env[prov.apiKeyEnvVar]);
+              const label = prov.displayName.padEnd(18).substring(0, 18);
+              return (
+                <box key={prov.name} height={1} backgroundColor={isCursor ? C.bgHighlight : C.bg}>
+                  <text>
+                    {isOn ? (
+                      <span fg={C.green} bold>{` [${pos}] `}</span>
+                    ) : (
+                      <span fg={C.dim}>{" [ ] "}</span>
+                    )}
+                    <span fg={isCursor ? C.white : hasKey ? C.fgMuted : C.dim} bold={isCursor}>{label}</span>
+                    {hasKey ? (
+                      <span fg={C.green}>{" ●"}</span>
+                    ) : (
+                      <span fg={C.dim}>{" ○ no key"}</span>
+                    )}
+                  </text>
+                </box>
+              );
+            })}
           </box>
         )}
       </box>
@@ -656,27 +761,29 @@ export function App() {
         paddingX={1}
       >
         <text>
-          <span fg={C.dim}>{"kimi-*  "}</span>
-          <span fg={C.fgMuted}>{"kimi → or"}</span>
-          <span fg={C.dim}>{"          "}</span>
-          <span fg={C.dim}>{"gpt-*  "}</span>
-          <span fg={C.fgMuted}>{"oai → litellm"}</span>
-          <span fg={C.dim}>{"          "}</span>
-          <span fg={C.dim}>{"gemini-*  "}</span>
-          <span fg={C.fgMuted}>{"google → zen → or"}</span>
+          <span fg={C.fgMuted}>{"  kimi-*      "}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"kimi, openrouter"}</span>
         </text>
         <text>
-          <span fg={C.dim}>{"glm-*  "}</span>
-          <span fg={C.fgMuted}>{"glm → zen → or"}</span>
-          <span fg={C.dim}>{"       "}</span>
-          <span fg={C.dim}>{"deepseek-*  "}</span>
-          <span fg={C.fgMuted}>{"zen → or"}</span>
-          <span fg={C.dim}>{"             "}</span>
-          <span fg={C.dim}>{"Pattern: glob (* = any)"}</span>
+          <span fg={C.fgMuted}>{"  gpt-*       "}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"oai, litellm"}</span>
         </text>
         <text>
+          <span fg={C.fgMuted}>{"  gemini-*    "}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"google, zen, openrouter"}</span>
+        </text>
+        <text>
+          <span fg={C.fgMuted}>{"  deepseek-*  "}</span>
+          <span fg={C.dim}>{" → "}</span>
+          <span fg={C.cyan}>{"zen, openrouter"}</span>
+        </text>
+        <text>
+          <span fg={C.dim}>{"  Glob pattern (* = any). Chain tried left to right. "}</span>
           <span fg={C.cyan} bold>{ruleEntries.length}</span>
-          <span fg={C.fgMuted}>{` custom rule${ruleEntries.length !== 1 ? "s" : ""}`}</span>
+          <span fg={C.fgMuted}>{" custom rule"}{ruleEntries.length !== 1 ? "s" : ""}</span>
         </text>
       </box>
     );
@@ -702,9 +809,13 @@ export function App() {
           paddingX={1}
         >
           <text>
-            <span fg={C.blue} bold>Status: </span>
+            <span fg={C.blue} bold>
+              Status:{" "}
+            </span>
             {telemetryEnabled ? (
-              <span fg={C.green} bold>● Enabled</span>
+              <span fg={C.green} bold>
+                ● Enabled
+              </span>
             ) : (
               <span fg={C.fgMuted}>○ Disabled</span>
             )}
@@ -718,12 +829,16 @@ export function App() {
           </text>
           <text> </text>
           <text>
-            <span fg={C.white} bold>Never sends keys, prompts, or paths.</span>
+            <span fg={C.white} bold>
+              Never sends keys, prompts, or paths.
+            </span>
           </text>
           <text> </text>
           <text>
             <span fg={C.dim}>Press [</span>
-            <span fg={C.green} bold>t</span>
+            <span fg={C.green} bold>
+              t
+            </span>
             <span fg={C.dim}>] to toggle.</span>
           </text>
         </box>
@@ -741,16 +856,24 @@ export function App() {
           paddingX={1}
         >
           <text>
-            <span fg={C.blue} bold>Status: </span>
+            <span fg={C.blue} bold>
+              Status:{" "}
+            </span>
             {statsEnabled ? (
-              <span fg={C.green} bold>● Enabled</span>
+              <span fg={C.green} bold>
+                ● Enabled
+              </span>
             ) : (
               <span fg={C.fgMuted}>○ Disabled</span>
             )}
           </text>
           <text>
-            <span fg={C.blue} bold>Buffer: </span>
-            <span fg={C.white} bold>{bufStats.events}</span>
+            <span fg={C.blue} bold>
+              Buffer:{" "}
+            </span>
+            <span fg={C.white} bold>
+              {bufStats.events}
+            </span>
             <span fg={C.fgMuted}> events (</span>
             <span fg={C.yellow}>{bytesHuman(bufStats.bytes)}</span>
             <span fg={C.fgMuted}>)</span>
@@ -765,9 +888,13 @@ export function App() {
           <text> </text>
           <text>
             <span fg={C.dim}>Press [</span>
-            <span fg={C.green} bold>u</span>
+            <span fg={C.green} bold>
+              u
+            </span>
             <span fg={C.dim}>] to toggle, [</span>
-            <span fg={C.red} bold>c</span>
+            <span fg={C.red} bold>
+              c
+            </span>
             <span fg={C.dim}>] to clear buffer.</span>
           </text>
         </box>
@@ -837,8 +964,10 @@ export function App() {
           {keys.map(([color, key, label], i) => (
             <span key={i}>
               {i > 0 && <span fg={C.dim}>{" │ "}</span>}
-              <span fg={color as string} bold>{key}</span>
-              <span fg={C.fgMuted}>{" "}{label}</span>
+              <span fg={color as string} bold>
+                {key}
+              </span>
+              <span fg={C.fgMuted}> {label}</span>
             </span>
           ))}
         </text>
@@ -852,13 +981,21 @@ export function App() {
       {/* Header */}
       <box height={HEADER_H} flexDirection="row" backgroundColor={C.bgAlt} paddingX={1}>
         <text>
-          <span fg={C.white} bold>claudish</span>
+          <span fg={C.white} bold>
+            claudish
+          </span>
           <span fg={C.dim}> ─ </span>
-          <span fg={C.blue} bold>{VERSION}</span>
+          <span fg={C.blue} bold>
+            {VERSION}
+          </span>
           <span fg={C.dim}> ─ </span>
-          <span fg={C.orange} bold>★ {profileName}</span>
+          <span fg={C.orange} bold>
+            ★ {profileName}
+          </span>
           <span fg={C.dim}> ─ </span>
-          <span fg={C.green} bold>{readyCount}</span>
+          <span fg={C.green} bold>
+            {readyCount}
+          </span>
           <span fg={C.fgMuted}> providers configured</span>
           <span fg={C.dim}>
             {"─".repeat(Math.max(1, width - 38 - profileName.length - VERSION.length))}

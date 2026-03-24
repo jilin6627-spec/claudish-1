@@ -7,6 +7,57 @@
 import { removeUriFormat } from "../../../transform.js";
 
 /**
+ * Sanitize a JSON Schema for OpenAI function calling compatibility.
+ *
+ * OpenAI rejects schemas that have oneOf/anyOf/allOf/enum/not at the TOP LEVEL
+ * of function parameters. Nested occurrences inside properties are fine.
+ *
+ * Strategy:
+ * - If root has oneOf/anyOf/allOf: collapse by picking the first branch that
+ *   has type "object", or fall back to { type: "object", properties: {},
+ *   additionalProperties: true }.
+ * - If root has enum or not: remove them.
+ * - Ensure root always has type: "object".
+ * - Then run removeUriFormat() for the existing uri-format sanitization.
+ */
+export function sanitizeSchemaForOpenAI(schema: any): any {
+  if (!schema || typeof schema !== "object") {
+    return removeUriFormat(schema);
+  }
+
+  let root = { ...schema };
+
+  // Collapse top-level oneOf / anyOf / allOf
+  const combinerKey = ["oneOf", "anyOf", "allOf"].find(
+    (k) => Array.isArray(root[k]) && root[k].length > 0
+  );
+  if (combinerKey) {
+    const branches: any[] = root[combinerKey];
+    // Prefer the first branch that is explicitly typed as an object
+    const objectBranch = branches.find(
+      (b: any) => b && typeof b === "object" && b.type === "object"
+    );
+    if (objectBranch) {
+      // Merge the chosen branch onto the root, dropping the combiner key
+      const { [combinerKey]: _dropped, ...rest } = root;
+      root = { ...rest, ...objectBranch };
+    } else {
+      // No object branch found — produce a permissive object schema
+      root = { type: "object", properties: {}, additionalProperties: true };
+    }
+  }
+
+  // Remove top-level enum and not (not valid at the parameters root for OpenAI)
+  const { enum: _enum, not: _not, ...withoutForbidden } = root;
+  root = withoutForbidden;
+
+  // Ensure root type is "object"
+  root.type = "object";
+
+  return removeUriFormat(root);
+}
+
+/**
  * Convert Claude tools to OpenAI function format
  */
 export function convertToolsToOpenAI(req: any, summarize = false): any[] {
@@ -20,7 +71,7 @@ export function convertToolsToOpenAI(req: any, summarize = false): any[] {
           : tool.description,
         parameters: summarize
           ? summarizeToolParameters(tool.input_schema)
-          : removeUriFormat(tool.input_schema),
+          : sanitizeSchemaForOpenAI(tool.input_schema),
       },
     })) || []
   );
@@ -59,7 +110,7 @@ function summarizeToolDescription(name: string, description: string): string {
 function summarizeToolParameters(schema: any): any {
   if (!schema) return schema;
 
-  const summarized = removeUriFormat({ ...schema });
+  const summarized = sanitizeSchemaForOpenAI({ ...schema });
 
   // Summarize property descriptions
   if (summarized.properties) {

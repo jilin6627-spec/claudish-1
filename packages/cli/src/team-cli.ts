@@ -95,8 +95,18 @@ export async function teamCommand(args: string[]): Promise<void> {
   const timeoutStr = getFlag(args, "--timeout");
   const timeout = timeoutStr ? parseInt(timeoutStr, 10) : 300;
 
-  const models = modelsRaw ? modelsRaw.split(",").map((m) => m.trim()).filter(Boolean) : [];
-  const judges = judgesRaw ? judgesRaw.split(",").map((m) => m.trim()).filter(Boolean) : undefined;
+  const models = modelsRaw
+    ? modelsRaw
+        .split(",")
+        .map((m) => m.trim())
+        .filter(Boolean)
+    : [];
+  const judges = judgesRaw
+    ? judgesRaw
+        .split(",")
+        .map((m) => m.trim())
+        .filter(Boolean)
+    : undefined;
 
   switch (subcommand) {
     case "run": {

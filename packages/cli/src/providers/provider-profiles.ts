@@ -31,6 +31,7 @@ import { OllamaProviderTransport } from "./transport/ollamacloud.js";
 import { OllamaAPIFormat } from "../adapters/ollama-api-format.js";
 import { LiteLLMProviderTransport } from "./transport/litellm.js";
 import { LiteLLMAPIFormat } from "../adapters/litellm-api-format.js";
+import { CodexAPIFormat } from "../adapters/codex-api-format.js";
 import { VertexProviderTransport, parseVertexModel } from "./transport/vertex-oauth.js";
 import { DefaultAPIFormat } from "../adapters/base-api-format.js";
 import { OpenRouterProvider } from "./transport/openrouter.js";
@@ -162,8 +163,9 @@ const glmProfile: ProviderProfile = {
  * rate-limit bucketing.
  *
  * Model routing inside the profile:
- *   - MiniMax models → AnthropicProviderTransport + AnthropicAPIFormat
- *   - All other models → OpenAIProviderTransport + OpenAIAPIFormat (delta-aware)
+ *   - MiniMax models  → AnthropicProviderTransport + AnthropicAPIFormat
+ *   - GPT-* models    → OpenAIProviderTransport (/v1/responses) + CodexAPIFormat (Responses API)
+ *   - All other models → OpenAIProviderTransport (/v1/chat/completions) + OpenAIAPIFormat (delta-aware)
  */
 const openCodeZenProfile: ProviderProfile = {
   createHandler(ctx) {
@@ -183,6 +185,22 @@ const openCodeZenProfile: ProviderProfile = {
       return handler;
     }
 
+    // GPT models are served via the OpenAI Responses API (/v1/responses), not /v1/chat/completions.
+    if (ctx.modelName.toLowerCase().startsWith("gpt-")) {
+      const responsesProvider = { ...ctx.provider, apiPath: "/v1/responses" };
+      const transport = new OpenAIProviderTransport(responsesProvider, ctx.modelName, zenApiKey);
+      const adapter = new CodexAPIFormat(ctx.modelName);
+      const handler = new ComposedHandler(transport, ctx.targetModel, ctx.modelName, ctx.port, {
+        adapter,
+        tokenStrategy: "delta-aware",
+        ...ctx.sharedOpts,
+      });
+      log(
+        `[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (Responses API composed): ${ctx.modelName}`
+      );
+      return handler;
+    }
+
     const transport = new OpenAIProviderTransport(ctx.provider, ctx.modelName, zenApiKey);
     const adapter = new OpenAIAPIFormat(ctx.modelName);
     const handler = new ComposedHandler(transport, ctx.targetModel, ctx.modelName, ctx.port, {
@@ -190,9 +208,7 @@ const openCodeZenProfile: ProviderProfile = {
       tokenStrategy: "delta-aware",
       ...ctx.sharedOpts,
     });
-    log(
-      `[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (composed): ${ctx.modelName}`
-    );
+    log(`[Proxy] Created OpenCode Zen${isGoProvider ? " Go" : ""} (composed): ${ctx.modelName}`);
     return handler;
   },
 };
@@ -227,9 +243,7 @@ const litellmProfile: ProviderProfile = {
       adapter,
       ...ctx.sharedOpts,
     });
-    log(
-      `[Proxy] Created LiteLLM handler (composed): ${ctx.modelName} (${ctx.provider.baseUrl})`
-    );
+    log(`[Proxy] Created LiteLLM handler (composed): ${ctx.modelName} (${ctx.provider.baseUrl})`);
     return handler;
   },
 };
@@ -287,9 +301,7 @@ const vertexProfile: ProviderProfile = {
       } else {
         // Mistral/Meta use OpenAI format; Mistral rawPredict uses bare model name
         const modelId =
-          parsed.publisher === "mistralai"
-            ? parsed.model
-            : `${parsed.publisher}/${parsed.model}`;
+          parsed.publisher === "mistralai" ? parsed.model : `${parsed.publisher}/${parsed.model}`;
         adapter = new DefaultAPIFormat(modelId);
       }
 

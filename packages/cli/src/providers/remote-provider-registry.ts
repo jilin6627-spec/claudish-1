@@ -38,7 +38,10 @@ import { getAllProviders, toRemoteProvider } from "./provider-definitions.js";
  */
 const getRemoteProviders = (): RemoteProvider[] => {
   return getAllProviders()
-    .filter((def) => !def.isLocal && def.baseUrl !== "" && def.name !== "qwen" && def.name !== "native-anthropic")
+    .filter(
+      (def) =>
+        !def.isLocal && def.baseUrl !== "" && def.name !== "qwen" && def.name !== "native-anthropic"
+    )
     .map(toRemoteProvider);
 };
 
