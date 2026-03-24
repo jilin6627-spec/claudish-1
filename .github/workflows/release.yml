@@ -219,7 +219,8 @@ jobs:
             const pkg = require('./package.json');
             delete pkg.dependencies['@claudish/core'];
             // Use local files, not relative paths to root
-            pkg.files = ['dist/', 'AI_AGENT_GUIDE.md', 'recommended-models.json', 'skills/'];
+            // native/mtm/mtm-* includes platform-specific mtm binaries (terminal multiplexer)
+            pkg.files = ['dist/', 'native/mtm/mtm-*', 'AI_AGENT_GUIDE.md', 'recommended-models.json', 'skills/'];
             require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2));
           "
           echo 'Modified package.json:'
