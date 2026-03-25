@@ -76,8 +76,15 @@ export class MtmDiagRunner {
     });
 
     const exitCode = await new Promise<number>((resolve) => {
-      this.mtmProc!.on("exit", (code) => resolve(code ?? 1));
-      this.mtmProc!.on("error", () => resolve(1));
+      this.mtmProc!.on("exit", (code) => {
+        resolve(code ?? 1);
+      });
+      this.mtmProc!.on("error", (err) => {
+        if (this.logStream) {
+          try { this.logStream.write(`[mtm] spawn error: ${err.message}\n`); } catch {}
+        }
+        resolve(1);
+      });
     });
 
     this.cleanup();
@@ -342,12 +349,12 @@ function parseLogMessage(msg: string): { isError: boolean; short: string; provid
 
   // Generic error
   if (msg.toLowerCase().includes("error")) {
-    // Trim to key part
-    const short = msg.replace(/^Error\s*\[\w+\]:\s*/, "").replace(/\.\s*$/, "");
-    return { isError: true, short: short.length > 40 ? short.slice(0, 39) + "…" : short, provider };
+    // Trim provider prefix: "Error [Provider Name]: message" → "message"
+    const short = msg.replace(/^Error\s*\[[^\]]+\]:\s*/, "").replace(/\.\s*$/, "");
+    return { isError: true, short: short.length > 80 ? short.slice(0, 79) + "…" : short, provider };
   }
 
-  return { isError: false, short: msg.length > 40 ? msg.slice(0, 39) + "…" : msg };
+  return { isError: false, short: msg.length > 80 ? msg.slice(0, 79) + "…" : msg };
 }
 
 /**
