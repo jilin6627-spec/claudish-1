@@ -29,7 +29,7 @@ const HeroSection: React.FC = () => {
 
   // State for status bar
   const [status, setStatus] = useState({
-    model: "g@gemini-2.5-pro",
+    model: "g@gemini-3.1-pro-preview",
     cost: "$0.000",
     context: "0%",
   });

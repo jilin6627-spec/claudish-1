@@ -29,7 +29,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "Gemini Advanced",
-    command: "g@gemini-2.5-pro",
+    command: "g@gemini-3.1-pro-preview",
     icon: Sparkles,
     color: "text-blue-400",
     bg: "bg-blue-500/10",
@@ -37,7 +37,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "ChatGPT Plus",
-    command: "oai@gpt-4.1",
+    command: "oai@gpt-5.4",
     icon: Bot,
     color: "text-green-400",
     bg: "bg-green-500/10",
@@ -45,7 +45,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "Kimi",
-    command: "kimi@kimi-k2",
+    command: "kimi@kimi-k2.5",
     icon: Moon,
     color: "text-purple-400",
     bg: "bg-purple-500/10",
@@ -62,7 +62,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "GLM / Zhipu",
-    command: "glm@GLM-4-Plus",
+    command: "glm@glm-5",
     icon: MessageSquareCode,
     color: "text-red-400",
     bg: "bg-red-500/10",
@@ -70,7 +70,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "MiniMax",
-    command: "mm@MiniMax-M1",
+    command: "mm@MiniMax-M2.7",
     icon: Zap,
     color: "text-yellow-400",
     bg: "bg-yellow-500/10",
@@ -78,7 +78,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "Vertex AI",
-    command: "v@gemini-2.5-pro",
+    command: "v@gemini-3.1-pro-preview",
     icon: Server,
     color: "text-sky-400",
     bg: "bg-sky-500/10",
@@ -87,7 +87,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "Z.AI",
-    command: "zai@claude-sonnet-4-5",
+    command: "zai@glm-5",
     icon: Globe,
     color: "text-indigo-400",
     bg: "bg-indigo-500/10",
@@ -95,7 +95,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "OllamaCloud",
-    command: "oc@qwen3-coder",
+    command: "oc@qwen3-coder-next",
     icon: Cloud,
     color: "text-gray-300",
     bg: "bg-gray-500/10",
@@ -103,7 +103,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "OpenRouter",
-    command: "or@deepseek/deepseek-r1",
+    command: "or@openai/gpt-5.4",
     icon: FastIcon,
     color: "text-emerald-400",
     bg: "bg-emerald-500/10",
@@ -112,7 +112,7 @@ const SUBSCRIPTIONS = [
   },
   {
     name: "Ollama (Local)",
-    command: "ollama@qwen3-coder:latest",
+    command: "ollama@llama3.2",
     icon: HardDrive,
     color: "text-cyan-400",
     bg: "bg-cyan-500/10",

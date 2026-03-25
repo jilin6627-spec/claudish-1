@@ -90,14 +90,14 @@ export const MultiModelAnimation: React.FC = () => {
                     visible={stage >= 2}
                     flag="--model-opus"
                     flagColor="text-purple-400"
-                    value="google/gemini-3-pro"
+                    value="google/gemini-3.1-pro-preview"
                     comment="Complex planning & vision"
                   />
                   <CommandRow
                     visible={stage >= 3}
                     flag="--model-sonnet"
                     flagColor="text-emerald-400"
-                    value="openai/gpt-5.1-codex"
+                    value="openai/gpt-5.4"
                     comment="Main coding logic"
                   />
                   <CommandRow

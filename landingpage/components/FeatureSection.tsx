@@ -64,10 +64,10 @@ const FeatureSection: React.FC = () => {
             </div>
             <div className="p-6 font-mono text-sm text-left flex-1 flex flex-col justify-center min-h-[200px]">
               <div className="text-gray-400 mb-2">
-                <span className="text-green-500">➜</span> claude --model g@gemini-2.5-pro
+                <span className="text-green-500">➜</span> claude --model g@gemini-3.1-pro-preview
               </div>
               <div className="text-red-400">
-                Error: Invalid model "g@gemini-2.5-pro"
+                Error: Invalid model "g@gemini-3.1-pro-preview"
                 <br />
                 <span className="text-gray-600 mt-2 block leading-relaxed text-xs">
                   Only Anthropic models are supported.
@@ -91,7 +91,7 @@ const FeatureSection: React.FC = () => {
             </div>
             <div className="p-6 font-mono text-sm text-left flex-1 flex flex-col justify-center min-h-[200px]">
               <div className="text-gray-400 mb-2">
-                <span className="text-claude-ish">➜</span> claudish --model g@gemini-2.5-pro
+                <span className="text-claude-ish">➜</span> claudish --model g@gemini-3.1-pro-preview
               </div>
               <div className="text-gray-300">
                 <div className="text-claude-ish/80 mb-1">✓ Connected via Google Gemini API</div>
@@ -323,31 +323,31 @@ const FeatureSection: React.FC = () => {
                 {/* List Items */}
                 <div className="grid grid-cols-12 text-gray-300 hover:bg-white/5 p-0.5 rounded cursor-default">
                   <div className="col-span-1 text-gray-600">1</div>
-                  <div className="col-span-5 text-blue-400">gemini-2.5-pro</div>
+                  <div className="col-span-5 text-blue-400">gemini-3.1-pro-preview</div>
                   <div className="col-span-3">$1.25</div>
                   <div className="col-span-3 text-right">1,000K</div>
                 </div>
                 <div className="grid grid-cols-12 text-gray-300 hover:bg-white/5 p-0.5 rounded cursor-default">
                   <div className="col-span-1 text-gray-600">2</div>
-                  <div className="col-span-5 text-green-400">gpt-4.1</div>
+                  <div className="col-span-5 text-green-400">gpt-5.4</div>
                   <div className="col-span-3">$2.00</div>
                   <div className="col-span-3 text-right">1,000K</div>
                 </div>
                 <div className="grid grid-cols-12 text-gray-300 hover:bg-white/5 p-0.5 rounded cursor-default">
                   <div className="col-span-1 text-gray-600">3</div>
-                  <div className="col-span-5 text-gray-200">grok-3-fast</div>
+                  <div className="col-span-5 text-gray-200">grok-4.20</div>
                   <div className="col-span-3">$5.00</div>
                   <div className="col-span-3 text-right">131K</div>
                 </div>
                 <div className="grid grid-cols-12 text-gray-300 hover:bg-white/5 p-0.5 rounded cursor-default">
                   <div className="col-span-1 text-gray-600">4</div>
-                  <div className="col-span-5 text-purple-400">kimi-k2</div>
+                  <div className="col-span-5 text-purple-400">kimi-k2.5</div>
                   <div className="col-span-3">$0.60</div>
                   <div className="col-span-3 text-right">128K</div>
                 </div>
                 <div className="grid grid-cols-12 text-gray-300 hover:bg-white/5 p-0.5 rounded cursor-default">
                   <div className="col-span-1 text-gray-600">5</div>
-                  <div className="col-span-5 text-cyan-400">qwen3-coder (local)</div>
+                  <div className="col-span-5 text-cyan-400">llama3.2 (local)</div>
                   <div className="col-span-3">$0.00</div>
                   <div className="col-span-3 text-right">32K</div>
                 </div>

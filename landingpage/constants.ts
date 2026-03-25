@@ -5,7 +5,7 @@ export const HERO_SEQUENCE: TerminalLine[] = [
   {
     id: "boot-1",
     type: "system",
-    content: "claudish --model g@gemini-2.5-pro",
+    content: "claudish --model g@gemini-3.1-pro-preview",
     delay: 500,
   },
 
@@ -16,8 +16,8 @@ export const HERO_SEQUENCE: TerminalLine[] = [
     content: "Welcome",
     data: {
       user: "Developer",
-      model: "g@gemini-2.5-pro",
-      version: "v5.10.0",
+      model: "g@gemini-3.1-pro-preview",
+      version: "v6.2.2",
     },
     delay: 1500,
   },
@@ -28,7 +28,7 @@ export const HERO_SEQUENCE: TerminalLine[] = [
     type: "rich-input",
     content: "Refactor the authentication module to use JWT tokens",
     data: {
-      model: "g@gemini-2.5-pro",
+      model: "g@gemini-3.1-pro-preview",
       cost: "$0.002",
       context: "12%",
       color: "bg-blue-500", // Google Blueish
@@ -78,7 +78,7 @@ export const HERO_SEQUENCE: TerminalLine[] = [
     type: "rich-input",
     content: "Switch to Grok and explain this quantum physics algorithm",
     data: {
-      model: "x-ai/grok-3-fast",
+      model: "xai@grok-4.20",
       cost: "$0.142",
       context: "15%",
       color: "bg-white", // Grok
@@ -173,7 +173,7 @@ export const MARKETING_FEATURES = [...HIGHLIGHT_FEATURES, ...STANDARD_FEATURES];
 export const MODEL_CARDS: ModelCard[] = [
   {
     id: "m1",
-    name: "g@gemini-2.5-pro",
+    name: "g@gemini-3.1-pro-preview",
     provider: "Google",
     description: "1M context. Direct Gemini API with thinking and vision.",
     tags: ["VISION", "TOOLS", "THINKING"],
@@ -181,7 +181,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     id: "m2",
-    name: "oai@gpt-4.1",
+    name: "oai@gpt-5.4",
     provider: "OpenAI",
     description: "Direct OpenAI API. High-fidelity code generation.",
     tags: ["CODING", "THINKING", "TOOLS"],
@@ -189,7 +189,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     id: "m3",
-    name: "x-ai/grok-3-fast",
+    name: "xai@grok-4.20",
     provider: "xAI",
     description: "Grok via OpenRouter. Fast reasoning with large context.",
     tags: ["FAST", "THINKING", "TOOLS"],
@@ -205,7 +205,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     id: "m5",
-    name: "mm@MiniMax-M1",
+    name: "mm@MiniMax-M2.7",
     provider: "MiniMax",
     description: "Cost-effective Anthropic-compatible reasoning.",
     tags: ["CHEAP", "THINKING", "TOOLS"],
@@ -213,7 +213,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     id: "m6",
-    name: "glm@GLM-4-Plus",
+    name: "glm@glm-5",
     provider: "GLM",
     description: "Zhipu direct API. Balanced performance for general tasks.",
     tags: ["BALANCED", "THINKING", "TOOLS"],
@@ -221,7 +221,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     id: "m7",
-    name: "v@gemini-2.5-pro",
+    name: "v@gemini-3.1-pro-preview",
     provider: "Vertex AI",
     description: "Google Cloud Vertex. Enterprise-grade with OAuth.",
     tags: ["ENTERPRISE", "VISION", "TOOLS"],
@@ -229,7 +229,7 @@ export const MODEL_CARDS: ModelCard[] = [
   },
   {
     id: "m8",
-    name: "ollama@qwen3-coder:latest",
+    name: "ollama@qwen3-coder-next",
     provider: "Local",
     description: "100% offline. Your code never leaves your machine.",
     tags: ["LOCAL", "PRIVACY", "FREE"],

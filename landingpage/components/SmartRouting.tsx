@@ -211,8 +211,8 @@ export const SmartRouting: React.FC = () => {
                   <div className="text-gray-500">$ claudish routing-table --watch</div>
                   <div className="text-claude-ish truncate">
                     {activePath === 0 && ">> DETECTED: claude-opus-4-6 (NATIVE)"}
-                    {activePath === 1 && ">> DETECTED: grok-3-fast:free (OPENROUTER)"}
-                    {activePath === 2 && ">> DETECTED: g@gemini-2.5-pro (DIRECT)"}
+                    {activePath === 1 && ">> DETECTED: grok-4.20:free (OPENROUTER)"}
+                    {activePath === 2 && ">> DETECTED: g@gemini-3.1-pro-preview (DIRECT)"}
                   </div>
                 </div>
               </div>
@@ -255,7 +255,7 @@ export const SmartRouting: React.FC = () => {
                     <span className="text-[#d97757]">✓</span> claude-opus-4-6
                   </li>
                   <li className="flex items-center gap-2 text-white">
-                    <span className="text-[#d97757]">✓</span> claude-sonnet-4-5
+                    <span className="text-[#d97757]">✓</span> claude-sonnet-4-6
                   </li>
                   <li className="flex items-center gap-2 text-white">
                     <span className="text-[#d97757]">✓</span> claude-haiku-4-5
@@ -301,10 +301,10 @@ export const SmartRouting: React.FC = () => {
                 </p>
                 <ul className="space-y-2">
                   <li className="flex items-center gap-2 text-white">
-                    <span className="text-[#3fb950]">✓</span> x-ai/grok-3-fast:free
+                    <span className="text-[#3fb950]">✓</span> x-ai/grok-4.20:free
                   </li>
                   <li className="flex items-center gap-2 text-white">
-                    <span className="text-[#3fb950]">✓</span> google/gemini-2.5-flash
+                    <span className="text-[#3fb950]">✓</span> google/gemini-3.1-pro-preview:free
                   </li>
                   <li className="flex items-center gap-2 text-white">
                     <span className="text-[#3fb950]">✓</span> deepseek/deepseek-r1:free
@@ -348,10 +348,10 @@ export const SmartRouting: React.FC = () => {
                 </p>
                 <ul className="space-y-2">
                   <li className="flex items-center gap-2 text-white">
-                    <span className="text-[#8b5cf6]">✓</span> g@gemini-2.5-pro
+                    <span className="text-[#8b5cf6]">✓</span> g@gemini-3.1-pro-preview
                   </li>
                   <li className="flex items-center gap-2 text-white">
-                    <span className="text-[#8b5cf6]">✓</span> oai@gpt-4.1
+                    <span className="text-[#8b5cf6]">✓</span> oai@gpt-5.4
                   </li>
                   <li className="flex items-center gap-2 text-white">
                     <span className="text-[#8b5cf6]">✓</span> kc@kimi-for-coding
@@ -393,7 +393,7 @@ export const SmartRouting: React.FC = () => {
               <div className="flex gap-2 text-white mb-4">
                 <span className="text-claude-ish">$</span>
                 <TypingAnimation
-                  text="claudish --model claude-sonnet-4-5"
+                  text="claudish --model claude-sonnet-4-6"
                   speed={20}
                   className="font-semibold"
                 />
@@ -475,7 +475,7 @@ export const SmartRouting: React.FC = () => {
               <div className="flex gap-2 text-white mb-4">
                 <span className="text-claude-ish">$</span>
                 <TypingAnimation
-                  text="claudish --model g@gemini-2.5-pro"
+                  text="claudish --model g@gemini-3.1-pro-preview"
                   speed={20}
                   className="font-semibold"
                 />
@@ -520,11 +520,11 @@ export const SmartRouting: React.FC = () => {
                     <span className="text-gray-600"># Native Claude</span>
                   </div>
                   <div className="pl-4">
-                    --model-sonnet g@gemini-2.5-pro \{" "}
+                    --model-sonnet g@gemini-3.1-pro-preview \{" "}
                     <span className="text-gray-600"># Direct Google API</span>
                   </div>
                   <div className="pl-4 mb-4">
-                    --model-haiku x-ai/grok-3-fast:free{" "}
+                    --model-haiku x-ai/grok-4.20:free{" "}
                     <span className="text-gray-600"># Free via OpenRouter</span>
                   </div>
                 </div>
