@@ -9,14 +9,34 @@ import {
   setApiKey,
   setEndpoint,
 } from "../profile-config.js";
+import { getFallbackChain } from "../providers/auto-route.js";
+import { parseModelSpec } from "../providers/model-parser.js";
 import { clearBuffer, getBufferStats } from "../stats-buffer.js";
+import { testProviderKey } from "./test-provider.js";
 import { PROVIDERS, ProviderDef, maskKey } from "./providers.js";
 import { C } from "./theme.js";
 
 const VERSION = "v5.16";
 
 type Tab = "providers" | "routing" | "privacy";
-type Mode = "browse" | "input_key" | "input_endpoint" | "add_routing_pattern" | "add_routing_chain";
+type Mode =
+  | "browse"
+  | "input_key"
+  | "input_endpoint"
+  | "add_routing_pattern"
+  | "add_routing_chain";
+
+type ProbeMode = "idle" | "input" | "running" | "done";
+
+interface ProbeEntry {
+  provider: string;
+  displayName: string;
+  status: "pending" | "testing" | "success" | "failed" | "skipped" | "no_key";
+  error?: string;
+  ms?: number;
+  hasKey?: boolean;
+  reason?: string;
+}
 
 function bytesHuman(b: number): string {
   if (b < 1024) return `${b} B`;
@@ -40,6 +60,10 @@ export function App() {
   const [chainOrder, setChainOrder] = useState<string[]>([]);
   const [chainCursor, setChainCursor] = useState(0);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { status: "testing" | "valid" | "failed"; error?: string; ms?: number }>>({});
+  const [probeMode, setProbeMode] = useState<ProbeMode>("idle");
+  const [probeModel, setProbeModel] = useState("");
+  const [probeResults, setProbeResults] = useState<ProbeEntry[]>([]);
 
   // Chain selector uses same PROVIDERS list for consistent naming
   const CHAIN_PROVIDERS = PROVIDERS;
@@ -92,6 +116,129 @@ export function App() {
 
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") return quit();
+
+    // Probe input mode — handled independently of main mode (non-blocking)
+    if (probeMode === "input") {
+      if (key.name === "return" || key.name === "enter") {
+        const model = probeModel.trim();
+        if (!model) {
+          setProbeModel("");
+          setProbeMode("idle");
+          return;
+        }
+        const parsed = parseModelSpec(model);
+        const chain = getFallbackChain(model, parsed.provider);
+        if (chain.length === 0) {
+          setProbeResults([
+            {
+              provider: "none",
+              displayName: "No routes found",
+              status: "failed",
+              error: "No credentials configured for any provider",
+            },
+          ]);
+          setProbeMode("done");
+          return;
+        }
+        // Check which routing rule matched
+        const ruleEntries = Object.entries(config.routing ?? {});
+        const matchedRule = ruleEntries.find(([pat]) => {
+          if (pat === model) return true;
+          if (pat.includes("*")) {
+            const regex = new RegExp("^" + pat.replace(/\*/g, ".*") + "$");
+            return regex.test(model);
+          }
+          return false;
+        });
+
+        const initial: ProbeEntry[] = chain.map((r) => {
+          const provDef = PROVIDERS.find((p) => p.name === r.provider);
+          const hk = !!(provDef && (config.apiKeys?.[provDef.apiKeyEnvVar] || process.env[provDef.apiKeyEnvVar]));
+          return {
+            provider: r.provider,
+            displayName: r.displayName,
+            status: hk ? "pending" : "no_key",
+            hasKey: hk,
+            reason: matchedRule ? `Custom rule: ${matchedRule[0]}` : "Default fallback chain",
+          };
+        });
+        setProbeResults(initial);
+        setProbeMode("running");
+
+        // Run tests sequentially — skip providers without keys
+        (async () => {
+          for (let i = 0; i < chain.length; i++) {
+            const entry = initial[i]!;
+            if (!entry.hasKey) {
+              // No key — mark as no_key (already set), continue to next
+              continue;
+            }
+            // Mark current as testing
+            setProbeResults((prev) =>
+              prev.map((e, idx) => (idx === i ? { ...e, status: "testing" } : e))
+            );
+            const startMs = Date.now();
+            const provDef = PROVIDERS.find((p) => p.name === chain[i]!.provider);
+            const apiKey =
+              (provDef
+                ? config.apiKeys?.[provDef.apiKeyEnvVar] ||
+                  process.env[provDef.apiKeyEnvVar]
+                : undefined) ?? "";
+            const elapsed = () => Date.now() - startMs;
+            const result = await testProviderKey(chain[i]!.provider, apiKey);
+            const ms = elapsed();
+            const ok = result === "valid";
+            setProbeResults((prev) =>
+              prev.map((e, idx) => {
+                if (idx === i) return { ...e, status: ok ? ("success" as const) : ("failed" as const), error: ok ? undefined : result, ms };
+                // After success: remaining providers with keys become "not reached", without keys stay "no_key"
+                if (idx > i && ok && e.status !== "no_key") return { ...e, status: "skipped" as const };
+                return e;
+              })
+            );
+            if (ok) break;
+          }
+          setProbeMode("done");
+        })();
+        return;
+      } else if (key.name === "escape") {
+        setProbeModel("");
+        setProbeMode("idle");
+      } else if (key.name === "backspace" || key.name === "delete") {
+        setProbeModel((p) => p.slice(0, -1));
+      } else if (key.raw && key.raw.length === 1 && !key.ctrl && !key.meta) {
+        setProbeModel((p) => p + key.raw);
+      }
+      return;
+    }
+
+    // Probe running/done — handle keys before normal routing handlers
+    if (probeMode === "running" && activeTab === "routing") {
+      if (key.name === "escape") {
+        setProbeModel("");
+        setProbeResults([]);
+        setProbeMode("idle");
+      }
+      // Block all other keys while running
+      return;
+    }
+
+    if (probeMode === "done" && activeTab === "routing") {
+      if (key.name === "q") {
+        return quit();
+      } else if (key.name === "escape" || key.name === "p") {
+        // Return to normal routing view
+        setProbeModel("");
+        setProbeResults([]);
+        setProbeMode("idle");
+      } else if (key.name === "return" || key.name === "enter") {
+        // Start a new probe
+        setProbeModel("");
+        setProbeResults([]);
+        setProbeMode("input");
+      }
+      return;
+    }
 
     // Input modes
     if (mode === "input_key" || mode === "input_endpoint") {
@@ -259,6 +406,27 @@ export function App() {
         } else {
           setStatusMsg("No stored key to remove.");
         }
+      } else if (key.name === "t") {
+        const apiKey =
+          config.apiKeys?.[selectedProvider.apiKeyEnvVar] ||
+          process.env[selectedProvider.apiKeyEnvVar];
+        const provName = selectedProvider.name;
+        if (!apiKey) {
+          setTestResults((prev) => ({ ...prev, [provName]: { status: "failed", error: "No key configured" } }));
+          return;
+        }
+        setTestResults((prev) => ({ ...prev, [provName]: { status: "testing" } }));
+        const startMs = Date.now();
+        testProviderKey(provName, apiKey).then((result) => {
+          const ms = Date.now() - startMs;
+          const ok = result === "valid";
+          setTestResults((prev) => ({
+            ...prev,
+            [provName]: ok
+              ? { status: "valid", ms }
+              : { status: "failed", error: result, ms },
+          }));
+        });
       }
     } else if (activeTab === "routing") {
       if (key.name === "a") {
@@ -284,6 +452,11 @@ export function App() {
         setProviderIndex((i) => Math.max(0, i - 1));
       } else if (key.name === "down" || key.name === "j") {
         setProviderIndex((i) => Math.min(Math.max(0, ruleEntries.length - 1), i + 1));
+      } else if (key.name === "p") {
+        setProbeModel("");
+        setProbeResults([]);
+        setStatusMsg(null);
+        setProbeMode("input");
       }
     } else if (activeTab === "privacy") {
       if (key.name === "t") {
@@ -425,6 +598,23 @@ export function App() {
       const isFirstUnready = !isReady && !separatorRendered;
       if (isFirstUnready) separatorRendered = true;
 
+      // Inline test result for this provider
+      const tr = testResults[p.name];
+      let statusFg = isReady ? C.green : C.dim;
+      let statusText = isReady ? "ready  " : "not set";
+      if (tr) {
+        if (tr.status === "testing") {
+          statusFg = C.yellow;
+          statusText = "testing";
+        } else if (tr.status === "valid") {
+          statusFg = C.green;
+          statusText = tr.ms !== undefined ? `ready ${tr.ms}ms` : "ready ✓";
+        } else {
+          statusFg = C.red;
+          statusText = "FAIL   ";
+        }
+      }
+
       return (
         <box key={p.name} flexDirection="column">
           {isFirstUnready && (
@@ -439,19 +629,17 @@ export function App() {
           )}
           <box height={1} flexDirection="row" backgroundColor={selected ? C.bgHighlight : C.bg}>
             <text>
-              <span fg={isReady ? C.green : C.dim}>{isReady ? "●" : "○"}</span>
+              <span fg={tr?.status === "testing" ? C.yellow : isReady ? C.green : C.dim}>
+                {tr?.status === "testing" ? "◌" : isReady ? "●" : "○"}
+              </span>
               <span>{"  "}</span>
               <span fg={selected ? C.white : isReady ? C.fgMuted : C.dim} bold={selected}>
                 {namePad}
               </span>
               <span fg={C.dim}>{"  "}</span>
-              {isReady ? (
-                <span fg={C.green} bold>
-                  {"ready  "}
-                </span>
-              ) : (
-                <span fg={C.dim}>{"not set"}</span>
-              )}
+              <span fg={statusFg} bold={tr?.status === "valid" || isReady}>
+                {statusText}
+              </span>
               <span fg={C.dim}>{"  "}</span>
               <span fg={isReady ? C.cyan : C.dim}>{keyDisplay}</span>
               {src ? <span fg={C.dim}>{` (${src})`}</span> : null}
@@ -538,6 +726,8 @@ export function App() {
       );
     }
 
+    const tr = testResults[selectedProvider.name];
+
     return (
       <box
         height={DETAIL_H}
@@ -593,6 +783,27 @@ export function App() {
             <span fg={C.cyan}>{selectedProvider.keyUrl}</span>
           </text>
         )}
+        {tr && (
+          <text>
+            <span fg={C.blue} bold>{"Test:  "}</span>
+            {tr.status === "testing" && (
+              <span fg={C.yellow} bold>{"◌ testing..."}</span>
+            )}
+            {tr.status === "valid" && (
+              <>
+                <span fg={C.green} bold>{"● valid"}</span>
+                {tr.ms !== undefined && <span fg={C.dim}>{`  ${tr.ms}ms`}</span>}
+                <span fg={C.fgMuted}>{"  API key is valid and endpoint is reachable."}</span>
+              </>
+            )}
+            {tr.status === "failed" && (
+              <>
+                <span fg={C.red} bold>{"✗ failed"}</span>
+                {tr.error && <span fg={C.red}>{`  ${tr.error}`}</span>}
+              </>
+            )}
+          </text>
+        )}
       </box>
     );
   }
@@ -604,7 +815,209 @@ export function App() {
     return chain.join(" → ");
   }
 
+  // Reasons shown beneath each probe entry
+  const PROVIDER_REASONS: Record<string, string> = {
+    litellm: "LiteLLM proxy",
+    "opencode-zen": "Free tier (OpenCode Zen)",
+    "opencode-zen-go": "Zen Go plan",
+    kimi: "Native Kimi API",
+    "kimi-coding": "Kimi Coding Plan",
+    minimax: "Native MiniMax API",
+    "minimax-coding": "MiniMax Coding Plan",
+    glm: "Native GLM API",
+    "glm-coding": "GLM Coding Plan",
+    google: "Direct Gemini API",
+    openai: "Direct OpenAI API",
+    zai: "Z.AI API",
+    ollamacloud: "Cloud Ollama",
+    vertex: "Vertex AI Express",
+    openrouter: "Fallback: 580+ models",
+  };
+
   function RoutingContent() {
+    // Full-screen probe takes over when not idle
+    const probeBoxH = contentH + DETAIL_H + 1; // spans content + detail area
+
+    if (probeMode === "input") {
+      return (
+        <box
+          height={probeBoxH}
+          border
+          borderStyle="single"
+          borderColor={C.focusBorder}
+          backgroundColor={C.bg}
+          flexDirection="column"
+          paddingX={2}
+          paddingY={1}
+        >
+          <text>
+            <span fg={C.white} bold>{"Route Probe"}</span>
+          </text>
+          <text> </text>
+          <text>
+            <span fg={C.fgMuted}>{"Enter a model name to trace its routing chain:"}</span>
+          </text>
+          <box flexDirection="row" height={1}>
+            <text>
+              <span fg={C.green} bold>{"> "}</span>
+              <span fg={C.white}>{probeModel}</span>
+              <span fg={C.cyan}>{"█"}</span>
+            </text>
+          </box>
+          <text> </text>
+          <text>
+            <span fg={C.dim}>{"Examples: kimi-k2  deepseek-r1  gemini-2.0-flash  gpt-4o"}</span>
+          </text>
+          <text> </text>
+          <text>
+            <span fg={C.fgMuted}>
+              {"The probe resolves the fallback chain and tests each provider's"}
+            </span>
+          </text>
+          <text>
+            <span fg={C.fgMuted}>
+              {"API key in order, stopping at the first success."}
+            </span>
+          </text>
+        </box>
+      );
+    }
+
+    if (probeMode === "running" || probeMode === "done") {
+      const successEntry = probeResults.find((e) => e.status === "success");
+      const allFailed =
+        probeMode === "done" && !successEntry;
+      const totalMs = successEntry?.ms;
+
+      const statusBadge =
+        probeMode === "running"
+          ? { text: "probing...", color: C.yellow }
+          : successEntry
+            ? { text: "routed", color: C.green }
+            : { text: "no route", color: C.red };
+
+      return (
+        <box
+          height={probeBoxH}
+          border
+          borderStyle="single"
+          borderColor={probeMode === "running" ? C.focusBorder : C.blue}
+          backgroundColor={C.bg}
+          flexDirection="column"
+          paddingX={2}
+          paddingY={1}
+        >
+          {/* Title row */}
+          <box flexDirection="row" height={1}>
+            <text>
+              <span fg={C.white} bold>
+                {probeMode === "done" ? "Probe: " : "Probing: "}
+              </span>
+              <span fg={C.cyan} bold>{probeModel}</span>
+              <span fg={C.dim}>{"  "}</span>
+              {probeMode === "done" && (
+                <span fg={statusBadge.color} bold>
+                  {successEntry ? "● " : "✗ "}
+                  {statusBadge.text}
+                </span>
+              )}
+              {probeMode === "running" && (
+                <span fg={C.yellow}>{"◌ probing..."}</span>
+              )}
+            </text>
+          </box>
+          <text> </text>
+          {/* Route source */}
+          <text>
+            <span fg={C.fgMuted}>
+              {probeResults[0]?.reason ?? `Chain (${probeResults.length} providers):`}
+            </span>
+          </text>
+          <text> </text>
+          {/* Chain entries — 2 lines each */}
+          {probeResults.map((entry, idx) => {
+            const isNoKey = entry.status === "no_key";
+            const isNotReached = entry.status === "skipped";
+            const isSelected = entry.status === "success" && probeMode === "done";
+
+            const statusIcon =
+              entry.status === "success" ? "●"
+              : entry.status === "failed" ? "✗"
+              : entry.status === "testing" ? "◌"
+              : isNoKey ? "○"
+              : isNotReached ? "·"
+              : "○";
+
+            const statusColor =
+              entry.status === "success" ? C.green
+              : entry.status === "failed" ? C.red
+              : entry.status === "testing" ? C.yellow
+              : C.dim;
+
+            const nameCol = entry.displayName.padEnd(18).substring(0, 18);
+
+            const statusText =
+              entry.status === "success" ? (entry.ms !== undefined ? `${entry.ms}ms` : "success")
+              : entry.status === "failed" ? (entry.error ?? "failed")
+              : entry.status === "testing" ? "testing..."
+              : isNoKey ? "not configured, skipping"
+              : isNotReached ? "not reached"
+              : "waiting";
+
+            const reason = PROVIDER_REASONS[entry.provider] ?? entry.provider;
+
+            return (
+              <box key={entry.provider} flexDirection="column">
+                <text>
+                  <span fg={C.dim}>{`${idx + 1}. `}</span>
+                  <span
+                    fg={isNoKey ? C.dim : isSelected ? C.white : isNotReached ? C.dim : C.fgMuted}
+                    bold={isSelected}
+                  >
+                    {nameCol}
+                  </span>
+                  <span fg={C.dim}>{"  "}</span>
+                  <span fg={statusColor} bold={entry.status === "success"}>
+                    {statusIcon}{" "}{statusText}
+                  </span>
+                  {isSelected && (
+                    <span fg={C.green} bold>{" ← routed here"}</span>
+                  )}
+                </text>
+                <text>
+                  <span fg={C.dim}>{"    ↳ "}</span>
+                  <span fg={isNoKey ? C.dim : C.fgMuted}>{reason}</span>
+                </text>
+              </box>
+            );
+          })}
+          {/* Result line */}
+          {probeMode === "done" && (
+            <>
+              <text> </text>
+              <text>
+                {allFailed ? (
+                  <>
+                    <span fg={C.red} bold>{"Result: "}</span>
+                    <span fg={C.red}>{"✗ No provider could serve this model"}</span>
+                  </>
+                ) : (
+                  <>
+                    <span fg={C.green} bold>{"Result: "}</span>
+                    <span fg={C.fgMuted}>{"Routed to "}</span>
+                    <span fg={C.cyan} bold>{successEntry!.displayName}</span>
+                    {totalMs !== undefined && (
+                      <span fg={C.fgMuted}>{` in ${totalMs}ms`}</span>
+                    )}
+                  </>
+                )}
+              </text>
+            </>
+          )}
+        </box>
+      );
+    }
+
     const innerH = contentH - 2;
 
     return (
@@ -744,11 +1157,17 @@ export function App() {
             })}
           </box>
         )}
+
       </box>
     );
   }
 
   function RoutingDetail() {
+    // Probe is full-screen — no separate detail panel shown
+    if (probeMode !== "idle") {
+      return null;
+    }
+
     return (
       <box
         height={DETAIL_H}
@@ -931,11 +1350,29 @@ export function App() {
   // ── Footer hotkeys ────────────────────────────────────────────────────────
   function Footer() {
     let keys: Array<[string, string, string]>;
-    if (activeTab === "providers") {
+    if (activeTab === "routing" && probeMode === "input") {
+      keys = [
+        [C.green, "Enter", "probe"],
+        [C.red, "Esc", "cancel"],
+      ];
+    } else if (activeTab === "routing" && probeMode === "running") {
+      keys = [
+        [C.yellow, "◌", "probing..."],
+        [C.red, "Esc", "cancel"],
+      ];
+    } else if (activeTab === "routing" && probeMode === "done") {
+      keys = [
+        [C.cyan, "p", "back to routes"],
+        [C.green, "Enter", "probe another"],
+        [C.red, "Esc", "back to routes"],
+        [C.dim, "q", "quit"],
+      ];
+    } else if (activeTab === "providers") {
       keys = [
         [C.blue, "↑↓", "navigate"],
         [C.green, "s", "set key"],
         [C.green, "e", "endpoint"],
+        [C.cyan, "t", "test key"],
         [C.red, "x", "remove"],
         [C.blue, "Tab", "section"],
         [C.dim, "q", "quit"],
@@ -945,6 +1382,7 @@ export function App() {
         [C.blue, "↑↓", "navigate"],
         [C.green, "a", "add rule"],
         [C.red, "d", "delete"],
+        [C.cyan, "p", "probe"],
         [C.blue, "Tab", "section"],
         [C.dim, "q", "quit"],
       ];
