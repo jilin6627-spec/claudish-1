@@ -2,6 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.4.0] - 2026-03-27
+
+### Documentation
+
+- update CHANGELOG.md for v6.3.2([`79e9fa4`](https://github.com/MadAppGang/claudish/commit/79e9fa43d4736d2542e07235d85856e006a8cecf))
+
+### New Features
+
+- v6.4.0 - MCP multi-provider routing, channel system, TUI overhaul([`1f667cb`](https://github.com/MadAppGang/claudish/commit/1f667cb4ff646b9200de4407a0ddbd491bfb9479))
+
 ## [6.3.2] - 2026-03-25
 
 ### Bug Fixes
