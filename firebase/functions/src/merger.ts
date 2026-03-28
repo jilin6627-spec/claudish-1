@@ -1,0 +1,235 @@
+import { Timestamp } from "firebase-admin/firestore";
+import type {
+  RawModel, ModelDoc, CollectorResult, PricingData, CapabilityFlags, FieldSource,
+} from "./schema.js";
+import { CONFIDENCE_RANK } from "./schema.js";
+
+// Sanity bounds for pricing (USD per million tokens)
+const PRICING_BOUNDS = {
+  input: { min: 0.001, max: 1000 },
+  output: { min: 0.001, max: 2000 },
+};
+
+// Sanity bounds for context window
+const CONTEXT_BOUNDS = { min: 1000, max: 10_000_000 };
+
+export function mergeResults(results: CollectorResult[]): ModelDoc[] {
+  // Step 1: Flatten all raw models
+  const allRaw: RawModel[] = results.flatMap(r => r.models);
+
+  // Step 2: Group by canonical ID
+  const byId = new Map<string, RawModel[]>();
+  for (const raw of allRaw) {
+    const key = raw.canonicalId ?? normalizeId(raw.externalId);
+    const existing = byId.get(key) ?? [];
+    existing.push(raw);
+    byId.set(key, existing);
+  }
+
+  // Step 3: Merge each group
+  const docs: ModelDoc[] = [];
+  for (const [canonicalId, raws] of byId) {
+    docs.push(mergeGroup(canonicalId, raws));
+  }
+
+  return docs;
+}
+
+function mergeGroup(modelId: string, raws: RawModel[]): ModelDoc {
+  // Sort by confidence desc (highest confidence first)
+  const sorted = [...raws].sort((a, b) => {
+    return CONFIDENCE_RANK[b.confidence] - CONFIDENCE_RANK[a.confidence];
+  });
+
+  const now = Timestamp.now();
+
+  // Pick best value for each field with source provenance
+  const pricingResult = pickBestWithSource(sorted, r => r.pricing);
+  const contextResult = pickBestWithSource(sorted, r => r.contextWindow);
+  const outputResult = pickBestWithSource(sorted, r => r.maxOutputTokens);
+  const displayResult = pickBestWithSource(sorted, r => r.displayName);
+  const descResult = pickBestWithSource(sorted, r => r.description);
+  const statusResult = pickBestWithSource(sorted, r => r.status);
+
+  // Validate and sanitize pricing
+  const pricing = pricingResult ? sanitizePricing(pricingResult.value) : undefined;
+
+  // Validate context window
+  const rawContext = contextResult?.value;
+  const contextWindow =
+    rawContext !== undefined && rawContext >= CONTEXT_BOUNDS.min && rawContext <= CONTEXT_BOUNDS.max
+      ? rawContext
+      : undefined;
+
+  if (rawContext !== undefined && contextWindow === undefined) {
+    console.warn(`[merger] context window out of bounds for ${modelId}: ${rawContext}`);
+  }
+
+  // releaseDate: pick the earliest non-null date string, track which raw had it
+  const allDates = raws
+    .filter((r): r is RawModel & { releaseDate: string } => !!r.releaseDate)
+    .sort((a, b) => (a.releaseDate < b.releaseDate ? -1 : 1));
+  const releaseDate = allDates.length > 0 ? allDates[0].releaseDate : undefined;
+  const releaseDateSource = releaseDate
+    ? makeFieldSource(allDates[0])
+    : undefined;
+
+  // For capabilities: highest-confidence source that provides any capabilities
+  const capsSource = sorted.find(r => r.capabilities && Object.keys(r.capabilities).length > 0);
+
+  const doc: ModelDoc = {
+    modelId,
+    displayName: displayResult?.value ?? modelId,
+    provider: pickBest(sorted, r => r.provider) ?? "unknown",
+    ...(descResult?.value !== undefined ? { description: descResult.value } : {}),
+    ...(releaseDate !== undefined ? { releaseDate } : {}),
+    pricing: pricing ?? undefined,
+    contextWindow,
+    maxOutputTokens: outputResult?.value,
+    capabilities: mergeCapabilities(sorted),
+    aliases: collectAliases(modelId, raws),
+    status: statusResult?.value ?? "unknown",
+    fieldSources: {
+      ...(pricing && pricingResult ? { pricing: pricingResult.source } : {}),
+      ...(contextWindow !== undefined && contextResult ? { contextWindow: contextResult.source } : {}),
+      ...(outputResult ? { maxOutputTokens: outputResult.source } : {}),
+      ...(capsSource ? { capabilities: makeFieldSource(capsSource) } : {}),
+      ...(displayResult ? { displayName: displayResult.source } : {}),
+      ...(descResult ? { description: descResult.source } : {}),
+      ...(statusResult ? { status: statusResult.source } : {}),
+      ...(releaseDateSource ? { releaseDate: releaseDateSource } : {}),
+    },
+    sources: buildSourcesMap(raws),
+    lastUpdated: now,
+    lastChecked: now,
+  };
+
+  return doc;
+}
+
+/** Pick the first non-null/undefined value from the sorted (highest confidence first) list. */
+function pickBest<T>(
+  sorted: RawModel[],
+  getter: (r: RawModel) => T | undefined
+): T | undefined {
+  for (const raw of sorted) {
+    const val = getter(raw);
+    if (val !== undefined && val !== null) return val;
+  }
+  return undefined;
+}
+
+interface PickResult<T> {
+  value: T;
+  source: FieldSource;
+}
+
+/** Like pickBest but also returns the FieldSource of the winning collector. */
+function pickBestWithSource<T>(
+  sorted: RawModel[],
+  getter: (r: RawModel) => T | undefined,
+): PickResult<T> | undefined {
+  for (const raw of sorted) {
+    const val = getter(raw);
+    if (val !== undefined && val !== null) {
+      return { value: val, source: makeFieldSource(raw) };
+    }
+  }
+  return undefined;
+}
+
+function makeFieldSource(raw: RawModel): FieldSource {
+  return {
+    collectorId: raw.collectorId,
+    confidence: raw.confidence,
+    ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+/** Union all capability flags: highest confidence wins for scalar flags.
+ *  For effortLevels array: pick the most detailed (longest) list from the highest-confidence source. */
+function mergeCapabilities(sorted: RawModel[]): ModelDoc["capabilities"] {
+  const merged: ModelDoc["capabilities"] = {};
+  // Apply lowest confidence first, highest confidence last (so highest confidence wins)
+  for (const raw of [...sorted].reverse()) {
+    if (!raw.capabilities) continue;
+    // Spread all scalar fields
+    const { effortLevels, ...rest } = raw.capabilities as Partial<CapabilityFlags>;
+    Object.assign(merged, rest);
+    // For effortLevels: keep the most informative (longest) list from the highest-confidence source
+    // Since we iterate reverse-confidence (lowest first), each higher-confidence source overwrites
+    if (effortLevels && effortLevels.length > 0) {
+      merged.effortLevels = effortLevels;
+    }
+  }
+  return merged;
+}
+
+/** Collect all external IDs as aliases (excluding the canonical ID itself). */
+function collectAliases(canonicalId: string, raws: RawModel[]): string[] {
+  const aliases = new Set<string>();
+  for (const raw of raws) {
+    if (raw.externalId !== canonicalId) aliases.add(raw.externalId);
+    for (const a of raw.aliases ?? []) aliases.add(a);
+  }
+  aliases.delete(canonicalId);
+  return [...aliases];
+}
+
+function buildSourcesMap(raws: RawModel[]): ModelDoc["sources"] {
+  const sources: ModelDoc["sources"] = {};
+  for (const raw of raws) {
+    const providerKey = raw.collectorId;
+    // Use the most recent and highest-confidence entry per collector
+    const existing = sources[providerKey];
+    if (
+      !existing ||
+      CONFIDENCE_RANK[raw.confidence] > CONFIDENCE_RANK[existing.confidence]
+    ) {
+      sources[providerKey] = {
+        confidence: raw.confidence,
+        externalId: raw.externalId,
+        lastSeen: Timestamp.now(),
+        sourceUrl: raw.sourceUrl,
+      };
+    }
+  }
+  return sources;
+}
+
+function normalizeId(id: string): string {
+  // Strip common vendor prefixes: "anthropic/", "openai/", etc.
+  return id.replace(/^[a-z-]+\//, "").toLowerCase();
+}
+
+function roundPrice(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+function sanitizePricing(pricing: PricingData): PricingData | undefined {
+  const input = roundPrice(pricing.input);
+  const output = roundPrice(pricing.output);
+
+  if (
+    input < PRICING_BOUNDS.input.min || input > PRICING_BOUNDS.input.max
+  ) {
+    console.warn(`[merger] pricing input out of bounds: ${input} USD/MTok — dropping`);
+    return undefined;
+  }
+
+  if (
+    output < PRICING_BOUNDS.output.min || output > PRICING_BOUNDS.output.max
+  ) {
+    console.warn(`[merger] pricing output out of bounds: ${output} USD/MTok — dropping`);
+    return undefined;
+  }
+
+  return {
+    ...pricing,
+    input,
+    output,
+    ...(pricing.cachedRead !== undefined ? { cachedRead: roundPrice(pricing.cachedRead) } : {}),
+    ...(pricing.cachedWrite !== undefined ? { cachedWrite: roundPrice(pricing.cachedWrite) } : {}),
+  };
+}

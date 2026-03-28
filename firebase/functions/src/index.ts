@@ -1,6 +1,12 @@
 import { onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import { defineSecret } from "firebase-functions/params";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { CollectorOrchestrator } from "./orchestrator.js";
+import { mergeResults } from "./merger.js";
+import { FirestoreWriter } from "./writer.js";
+import { handleQueryModels } from "./query-handler.js";
 
 initializeApp();
 const db = getFirestore();
@@ -124,6 +130,125 @@ export const telemetryIngest = onRequest(
     } catch (err) {
       console.error("Firestore write failed:", err);
       res.status(500).json({ error: "Internal error" });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// Model catalog — secrets required by collectors
+// ─────────────────────────────────────────────────────────────
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+const FIRECRAWL_API_KEY = defineSecret("FIRECRAWL_API_KEY");
+const GOOGLE_GEMINI_API_KEY = defineSecret("GOOGLE_GEMINI_API_KEY");
+const TOGETHER_API_KEY = defineSecret("TOGETHER_API_KEY");
+const MISTRAL_API_KEY = defineSecret("MISTRAL_API_KEY");
+const DEEPSEEK_API_KEY = defineSecret("DEEPSEEK_API_KEY");
+const FIREWORKS_API_KEY = defineSecret("FIREWORKS_API_KEY");
+const OPENCODE_ZEN_API_KEY = defineSecret("OPENCODE_ZEN_API_KEY");
+
+const CATALOG_SECRETS = [
+  ANTHROPIC_API_KEY,
+  FIRECRAWL_API_KEY,
+  GOOGLE_GEMINI_API_KEY,
+  TOGETHER_API_KEY,
+  MISTRAL_API_KEY,
+  DEEPSEEK_API_KEY,
+  FIREWORKS_API_KEY,
+  OPENCODE_ZEN_API_KEY,
+];
+
+// ─────────────────────────────────────────────────────────────
+// Scheduled collector — every 6 hours
+// ─────────────────────────────────────────────────────────────
+export const collectModelCatalog = onSchedule(
+  {
+    schedule: "every 6 hours",
+    region: "us-central1",
+    timeoutSeconds: 540,       // 9 minutes — plenty for all collectors in parallel
+    memory: "512MiB",
+    secrets: CATALOG_SECRETS,
+  },
+  async (_event) => {
+    const start = Date.now();
+    console.log("[catalog] starting model catalog collection");
+
+    const orchestrator = new CollectorOrchestrator();
+    const results = await orchestrator.runAll();
+
+    const successCount = results.filter(r => !r.error).length;
+    const failureCount = results.filter(r => r.error).length;
+    console.log(
+      `[catalog] collectors done: ${successCount} ok, ${failureCount} failed`
+    );
+
+    const merged = mergeResults(results);
+    console.log(`[catalog] merged to ${merged.length} unique models`);
+
+    const writer = new FirestoreWriter();
+    await writer.write(merged);
+
+    const duration = Date.now() - start;
+    console.log(`[catalog] write complete — total duration: ${duration}ms`);
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// HTTP query function — GET /models
+// ─────────────────────────────────────────────────────────────
+export const queryModels = onRequest(
+  {
+    region: "us-central1",
+    maxInstances: 5,
+    cors: true,
+  },
+  handleQueryModels
+);
+
+// ─────────────────────────────────────────────────────────────
+// Manual trigger — HTTP POST to run collection on demand
+// ─────────────────────────────────────────────────────────────
+export const collectModelCatalogManual = onRequest(
+  {
+    region: "us-central1",
+    maxInstances: 1,
+    timeoutSeconds: 540,
+    memory: "512MiB",
+    cors: true,
+    secrets: CATALOG_SECRETS,
+  },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed — use POST" });
+      return;
+    }
+
+    console.log("[catalog] manual collection triggered");
+
+    try {
+      const orchestrator = new CollectorOrchestrator();
+      const results = await orchestrator.runAll();
+
+      const merged = mergeResults(results);
+      const writer = new FirestoreWriter();
+      await writer.write(merged);
+
+      const successCount = results.filter(r => !r.error).length;
+      const failureCount = results.filter(r => r.error).length;
+
+      res.status(200).json({
+        ok: true,
+        modelsCollected: results.reduce((s, r) => s + r.models.length, 0),
+        modelsMerged: merged.length,
+        collectorsOk: successCount,
+        collectorsFailed: failureCount,
+        errors: results.filter(r => r.error).map(r => ({
+          collectorId: r.collectorId,
+          error: r.error,
+        })),
+      });
+    } catch (err) {
+      console.error("[catalog] manual collection failed:", err);
+      res.status(500).json({ error: String(err) });
     }
   }
 );
