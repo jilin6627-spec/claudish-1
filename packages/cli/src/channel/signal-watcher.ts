@@ -32,7 +32,8 @@ export class SignalWatcher {
 
   constructor(
     private sessionId: string,
-    private callback: SignalCallback
+    private callback: SignalCallback,
+    private quietPeriodMs = QUIET_PERIOD_MS,
   ) {}
 
   /** Current state. */
@@ -72,7 +73,7 @@ export class SignalWatcher {
         const lastLine = lines[lines.length - 1] || text.trim();
         this.transition("waiting_for_input", { content: lastLine });
       }
-    }, QUIET_PERIOD_MS);
+    }, this.quietPeriodMs);
   }
 
   /** Notify that the process exited. */

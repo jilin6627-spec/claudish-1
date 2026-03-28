@@ -69,6 +69,12 @@ describe("ScrollbackBuffer", () => {
     expect(buf.getLines(100)).toEqual(["a", "b"]);
   });
 
+  test("handles double newlines correctly", () => {
+    const buf = new ScrollbackBuffer(10);
+    buf.append("a\n\nb\n");
+    expect(buf.getLines()).toEqual(["a", "", "b"]);
+  });
+
   test("ring buffer correctness after multiple wraps", () => {
     const buf = new ScrollbackBuffer(3);
     // First fill

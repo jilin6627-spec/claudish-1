@@ -26,11 +26,11 @@ export class ScrollbackBuffer {
     const cleaned = data.replace(ANSI_RE, "");
     const newLines = cleaned.split("\n");
 
-    for (const line of newLines) {
+    for (let i = 0; i < newLines.length; i++) {
       // Skip empty trailing element from split (trailing newline)
-      if (line === "" && newLines.indexOf(line) === newLines.length - 1) continue;
+      if (newLines[i] === "" && i === newLines.length - 1) continue;
 
-      this.lines[this.head] = line;
+      this.lines[this.head] = newLines[i];
       this.head = (this.head + 1) % this.capacity;
       if (this.count < this.capacity) this.count++;
       this._totalLines++;

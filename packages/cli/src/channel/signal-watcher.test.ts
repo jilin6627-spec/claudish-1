@@ -10,7 +10,7 @@ describe("SignalWatcher", () => {
   beforeEach(() => {
     events = [];
     callback = (_sid, data) => events.push(data);
-    watcher = new SignalWatcher("test-session", callback);
+    watcher = new SignalWatcher("test-session", callback, 100); // 100ms for tests
   });
 
   afterEach(() => {
@@ -91,8 +91,8 @@ describe("SignalWatcher", () => {
     // Should NOT be waiting_for_input immediately
     expect(watcher.state).toBe("running");
 
-    // Wait for quiet period (2s) + buffer
-    await new Promise((r) => setTimeout(r, 2500));
+    // Wait for quiet period (100ms) + buffer
+    await new Promise((r) => setTimeout(r, 150));
 
     expect(watcher.state).toBe("waiting_for_input");
     const lastEvent = events[events.length - 1];
@@ -103,12 +103,12 @@ describe("SignalWatcher", () => {
     watcher.feed("Starting\n");
     watcher.feed("Is this a question?\n");
 
-    // Output more data before quiet period expires
-    await new Promise((r) => setTimeout(r, 1000));
+    // Output more data before quiet period expires (at 50ms, well before 100ms quiet period)
+    await new Promise((r) => setTimeout(r, 50));
     watcher.feed("More output arriving\n");
 
-    // Wait past the original quiet period
-    await new Promise((r) => setTimeout(r, 1500));
+    // Wait past the original quiet period (150ms total > 100ms quiet period from first feed)
+    await new Promise((r) => setTimeout(r, 150));
 
     // Should NOT be waiting_for_input because output reset the timer
     expect(watcher.state).toBe("running");

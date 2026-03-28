@@ -135,8 +135,95 @@ describe("Group 1: MCP Protocol — channel capability", () => {
     const output = JSON.parse((out.content as any)[0].text);
     expect(output.output.length).toBeGreaterThan(0);
     expect(notifications.length).toBeGreaterThan(0);
-    expect(notifications[0].meta.session_id).toBe(sid);
+
+    // All notifications must carry required meta fields
+    for (const n of notifications) {
+      expect(n.meta.session_id).toBe(sid);
+      expect(n.meta.event).toBeDefined();
+      expect(n.meta.model).toBeDefined();
+      expect(n.meta.elapsed_seconds).toBeDefined();
+    }
+
+    // At least one "running" event (first output triggers starting → running)
+    const events = notifications.map((n: any) => n.meta.event as string);
+    expect(events).toContain("running");
+
+    // Last event must be a terminal state
+    const lastEvent = events[events.length - 1];
+    expect(["completed", "failed"]).toContain(lastEvent);
+
+    // No terminal event before a "running" event
+    const firstRunningIdx = events.indexOf("running");
+    const firstTerminalIdx = events.findIndex((e: string) => e === "completed" || e === "failed");
+    expect(firstTerminalIdx).toBeGreaterThan(firstRunningIdx);
   }, 90000);
+});
+
+// ─── Group 1b: Tool group filtering ──────────────────────────────────────────
+// Validates that CLAUDISH_MCP_TOOLS env var correctly limits which tools are
+// exposed by the MCP server.
+
+describe("Group 1b: MCP Protocol — channel-only tools", () => {
+  let client: Client;
+  let transport: StdioClientTransport;
+
+  beforeAll(async () => {
+    transport = new StdioClientTransport({
+      command: "bun",
+      args: ["run", SERVER_ENTRY, "--mcp"],
+      env: { ...process.env, CLAUDISH_MCP_TOOLS: "channel" },
+      stderr: "pipe",
+    });
+    client = new Client({ name: "test-client-channel", version: "1.0.0" }, { capabilities: {} });
+    await client.connect(transport);
+  }, 15000);
+
+  afterAll(async () => {
+    try { await transport.close(); } catch {}
+  });
+
+  test("lists only the 5 channel tools when CLAUDISH_MCP_TOOLS=channel", async () => {
+    const result = await client.listTools();
+    const names = result.tools.map((t) => t.name).sort();
+    expect(names).toEqual([
+      "cancel_session",
+      "create_session",
+      "get_output",
+      "list_sessions",
+      "send_input",
+    ]);
+  });
+});
+
+describe("Group 1b: MCP Protocol — low-level-only tools", () => {
+  let client: Client;
+  let transport: StdioClientTransport;
+
+  beforeAll(async () => {
+    transport = new StdioClientTransport({
+      command: "bun",
+      args: ["run", SERVER_ENTRY, "--mcp"],
+      env: { ...process.env, CLAUDISH_MCP_TOOLS: "low-level" },
+      stderr: "pipe",
+    });
+    client = new Client({ name: "test-client-low-level", version: "1.0.0" }, { capabilities: {} });
+    await client.connect(transport);
+  }, 15000);
+
+  afterAll(async () => {
+    try { await transport.close(); } catch {}
+  });
+
+  test("lists only the 4 low-level tools when CLAUDISH_MCP_TOOLS=low-level", async () => {
+    const result = await client.listTools();
+    const names = result.tools.map((t) => t.name).sort();
+    expect(names).toEqual([
+      "compare_models",
+      "list_models",
+      "run_prompt",
+      "search_models",
+    ]);
+  });
 });
 
 // ─── Group 2: Real Claude Code Integration ───────────────────────────────────
