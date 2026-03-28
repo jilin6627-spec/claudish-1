@@ -10,6 +10,7 @@ import { handleQueryModels } from "./query-handler.js";
 
 initializeApp();
 const db = getFirestore();
+db.settings({ ignoreUndefinedProperties: true });
 
 // Required fields in the telemetry report
 const REQUIRED_FIELDS = [
