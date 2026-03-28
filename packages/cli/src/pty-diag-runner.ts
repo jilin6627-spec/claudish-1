@@ -70,7 +70,7 @@ export class MtmDiagRunner {
     // -S statusPath : render status bar on the last row (not a pane, just 1 ncurses line)
     // -L logPath    : diagnostic log file for expanded view (click status bar or Ctrl-G d)
     // stdio: inherit — mtm gets direct terminal access
-    this.mtmProc = spawn(mtmBin, ["-e", claudeCmd, "-S", this.statusPath, "-L", this.logPath], {
+    this.mtmProc = spawn(mtmBin, ["-t", "xterm-256color", "-e", claudeCmd, "-S", this.statusPath, "-L", this.logPath], {
       stdio: "inherit",
       env: mergedEnv,
     });

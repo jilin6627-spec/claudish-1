@@ -464,7 +464,8 @@ HANDLER(sgr) /* SGR - Select Graphic Rendition */
         case  0:  CALL(sgr0);                                              break;
         case  1:  wattron(win,  A_BOLD);                                   break;
         case  2:  wattron(win,  A_DIM);                                    break;
-        case  4:  wattron(win,  A_UNDERLINE);                              break;
+        case  4:  /* Ignore underline — Claude Code uses it decoratively
+                   * but ncurses renders it as visible underscores */        break;
         case  5:  wattron(win,  A_BLINK);                                  break;
         case  7:  wattron(win,  A_REVERSE);                                break;
         case  8:  wattron(win,  A_INVIS);                                  break;
