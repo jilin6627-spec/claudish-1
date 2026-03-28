@@ -2,6 +2,17 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.4.1] - 2026-03-28
+
+### Bug Fixes
+
+- v6.4.1 - fix mtm underline rendering, use xterm-256color TERM([`dd74640`](https://github.com/MadAppGang/claudish/commit/dd74640b5fea09e891735b4b7661a9bf7f094ba6))
+- parseLogMessage regex, mtm rendering artifacts, fallback caching([`199b04e`](https://github.com/MadAppGang/claudish/commit/199b04eaa0851a336b2e789673846625170a4a2b))
+
+### Documentation
+
+- update CHANGELOG.md for v6.4.0([`ba5c7c3`](https://github.com/MadAppGang/claudish/commit/ba5c7c352a29916b1c6b009f7b4e7e0e95e080b6))
+
 ## [6.4.0] - 2026-03-27
 
 ### Documentation
