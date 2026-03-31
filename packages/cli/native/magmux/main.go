@@ -961,6 +961,7 @@ type Pane struct {
 	cmd           *exec.Cmd
 	mu            sync.Mutex
 	dead          bool
+	dirty         bool // content changed since last render
 	altMode       bool // child is in alternate screen (vim, htop, etc.)
 	bracketPaste  bool // child requested bracketed paste mode (2004)
 	focusEvents   bool // child requested focus events (1004)
@@ -1040,6 +1041,7 @@ func (p *Pane) readLoop(wg *sync.WaitGroup) {
 		if n > 0 {
 			p.mu.Lock()
 			p.vt.write(buf[:n])
+			p.dirty = true
 			p.mu.Unlock()
 		}
 		if err != nil {
@@ -1929,31 +1931,37 @@ func (m *Magmux) parseSGRMouse(buf []byte) (int, bool) {
 }
 
 func (m *Magmux) renderLoop() {
-	// Render at ~30fps
-	ticker := make(chan struct{}, 1)
-	go func() {
-		for {
-			select {
-			case <-m.quit:
-				return
-			default:
-				ticker <- struct{}{}
-				sleepMs(33)
-			}
-		}
-	}()
-
 	for {
 		select {
 		case <-m.quit:
 			return
-		case <-ticker:
+		default:
 			m.render()
+			sleepMs(16) // ~60fps max, but render() skips when nothing dirty
 		}
 	}
 }
 
 func (m *Magmux) render() {
+	// Check if any pane has new content
+	anyDirty := false
+	for _, p := range m.allPanes {
+		p.mu.Lock()
+		if p.dirty {
+			anyDirty = true
+			p.dirty = false
+		}
+		p.mu.Unlock()
+	}
+	if !anyDirty {
+		// Even if no content changed, update cursor position (cheap)
+		if m.focused != nil && m.focused.screen != nil {
+			s := m.focused.screen
+			fmt.Fprintf(os.Stdout, "\x1b[%d;%dH", m.focused.y+s.curY+1, m.focused.x+s.curX+1)
+		}
+		return
+	}
+
 	r := &m.renderer
 	r.reset()
 	r.hideCursor()
