@@ -545,6 +545,25 @@ func (vt *VTParser) doCSI(w rune) {
 		return
 	}
 
+	// CSI > ... sequences (modifier key modes, etc.) — handle known ones, ignore rest
+	if vt.inter == '>' {
+		switch w {
+		case 'c': // DA2
+			vt.node.writePTY([]byte("\x1b[>1;10;0c"))
+		case 'm', 'n': // MODSET/MODOFF — xterm key modification modes, ignore
+		}
+		return
+	}
+
+	// CSI SP ... sequences
+	if vt.inter == ' ' {
+		switch w {
+		case 'q': // DECSCUSR - set cursor shape
+			vt.node.cursorShape = vt.p0(0)
+		}
+		return
+	}
+
 	switch w {
 	case 'A': // CUU - cursor up
 		s.curY = max(s.scrollTop, s.curY-vt.p1(0))
@@ -667,9 +686,14 @@ func (vt *VTParser) doCSI(w rune) {
 	case 'm': // SGR - select graphic rendition
 		vt.doSGR()
 	case 'n': // DSR - device status report
-		if vt.p0(0) == 6 { // cursor position report
+		if vt.p0(0) == 6 { // CPR - cursor position report
+			// Respond with current cursor position.
+			// Must be accurate — apps like Claude Code use this to determine
+			// where to render input. Read under lock to avoid race.
 			resp := fmt.Sprintf("\x1b[%d;%dR", s.curY+1, s.curX+1)
 			vt.node.writePTY([]byte(resp))
+		} else if vt.p0(0) == 5 { // Device status - report OK
+			vt.node.writePTY([]byte("\x1b[0n"))
 		}
 	case 'Z': // CBT - cursor backward tabulation
 		n := vt.p1(0)
@@ -685,13 +709,8 @@ func (vt *VTParser) doCSI(w rune) {
 		for i := 0; i < n; i++ {
 			vt.doPrint(vt.node.lastChar)
 		}
-	case 'c': // DA - device attributes
-		if vt.inter == '>' {
-			// DA2 - secondary device attributes (report as VT220)
-			vt.node.writePTY([]byte("\x1b[>1;10;0c"))
-		} else {
-			vt.node.writePTY([]byte("\x1b[?1;2c"))
-		}
+	case 'c': // DA - primary device attributes
+		vt.node.writePTY([]byte("\x1b[?1;2c"))
 	case 'g': // TBC - tab clear
 		// Ignore for now (would need tab stop tracking)
 	case 'h': // SM - set mode
@@ -701,10 +720,6 @@ func (vt *VTParser) doCSI(w rune) {
 	case 'l': // RM - reset mode
 		if vt.p0(0) == 4 {
 			s.insert = false
-		}
-	case 'q': // DECSCUSR - set cursor shape (with space intermediate)
-		if vt.inter == ' ' {
-			vt.node.cursorShape = vt.p0(0)
 		}
 	case 't': // WINOPS - window operations
 		switch vt.p0(0) {
