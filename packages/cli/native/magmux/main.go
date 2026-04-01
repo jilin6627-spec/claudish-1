@@ -1042,7 +1042,7 @@ func (p *Pane) spawnPTY(command string, args ...string) error {
 }
 
 func (p *Pane) writePTY(data []byte) {
-	if p.ptmx != nil {
+	if p.ptmx != nil && !p.gridFrozen {
 		p.ptmx.Write(data)
 	}
 }
@@ -1061,6 +1061,7 @@ func (p *Pane) readLoop(wg *sync.WaitGroup) {
 		if err != nil {
 			p.mu.Lock()
 			p.dead = true
+			p.dirty = true
 			// Reap child process and extract exit status
 			if p.cmd != nil {
 				p.cmd.Wait()
@@ -1247,20 +1248,20 @@ func (r *Renderer) renderPane(p *Pane) {
 	p.mu.Lock()
 	s := p.screen
 
-	// Determine background tint color for this pane
+	// Determine background tint color for this pane (subtle, not overwhelming)
 	var tintBg Color
 	hasTint := false
 	if p.tintColor == "green" {
-		tintBg = Color{Index: 22} // dark green
+		tintBg = Color{R: 12, G: 24, B: 12, True: true} // barely-there dark green
 		hasTint = true
 	} else if p.tintColor == "red" {
-		tintBg = Color{Index: 52} // dark red
+		tintBg = Color{R: 30, G: 10, B: 10, True: true} // barely-there dark red
 		hasTint = true
 	} else if p.gridFrozen {
 		if p.exitCode == 0 {
-			tintBg = Color{Index: 22} // dark green
+			tintBg = Color{R: 20, G: 40, B: 20, True: true}
 		} else {
-			tintBg = Color{Index: 52} // dark red
+			tintBg = Color{R: 45, G: 15, B: 15, True: true}
 		}
 		hasTint = true
 	}
@@ -1351,58 +1352,97 @@ func (r *Renderer) renderSelection(p *Pane) {
 	r.prevBg = defaultColor
 }
 
+func (r *Renderer) renderStatusBarWithClock(row, cols int, text, clock string) {
+	// Clock pill is right-aligned: " ⏱ Xm XXs " with a subtle bg
+	clockPill := fmt.Sprintf(" %s ", clock)
+	clockWidth := len(clockPill)
+	// Render main status bar leaving room for clock on the right
+	r.renderStatusBar(row, cols-clockWidth-1, text)
+	// Move to right edge and draw clock pill
+	r.moveTo(row, cols-clockWidth)
+	fmt.Fprintf(&r.buf, "\x1b[0m\x1b[48;2;55;55;65m\x1b[96;1m%s\x1b[0m", clockPill) // cyan on dark gray
+	r.prevFg = Color{Index: -2}
+	r.prevBg = Color{Index: -2}
+	r.prevAttr = 0
+}
+
 func (r *Renderer) renderStatusBar(row, cols int, text string) {
 	r.moveTo(row, 0)
-	// Dark background for status bar
-	r.setAttr(defaultColor, defaultColor, AttrDim)
-	fmt.Fprintf(&r.buf, "\x1b[48;5;236m")
-	r.prevBg = Color{Index: -2} // force reset next
+	// Dark status bar background
+	barBg := "\x1b[48;5;235m"
+	fmt.Fprintf(&r.buf, "\x1b[0m%s", barBg)
 
-	// Parse and render status segments (tab-separated, COLOR:text)
+	// Parse segments (tab-separated, COLOR:text)
 	segments := strings.Split(text, "\t")
-	col := 1
-	for _, seg := range segments {
-		if col > 1 {
-			r.buf.WriteString(" ")
+	col := 0
+
+	// Left padding
+	r.buf.WriteByte(' ')
+	col++
+
+	for i, seg := range segments {
+		if i > 0 {
+			// Gap between pills: back to bar background
+			fmt.Fprintf(&r.buf, "\x1b[0m%s ", barBg)
 			col++
 		}
 		parts := strings.SplitN(seg, ":", 2)
-		if len(parts) == 2 {
-			color := strings.TrimSpace(parts[0])
-			txt := strings.TrimSpace(parts[1])
-			switch color {
-			case "M": // Magenta
-				fmt.Fprintf(&r.buf, "\x1b[1;35m")
-			case "C": // Cyan
-				fmt.Fprintf(&r.buf, "\x1b[1;36m")
-			case "G": // Green
-				fmt.Fprintf(&r.buf, "\x1b[1;32m")
-			case "R": // Red
-				fmt.Fprintf(&r.buf, "\x1b[1;31m")
-			case "Y": // Yellow
-				fmt.Fprintf(&r.buf, "\x1b[1;33m")
-			case "W": // White
-				fmt.Fprintf(&r.buf, "\x1b[37m")
-			case "D": // Dim
-				fmt.Fprintf(&r.buf, "\x1b[2;37m")
-			default:
-				fmt.Fprintf(&r.buf, "\x1b[37m")
-			}
-			r.buf.WriteString(txt)
+		if len(parts) != 2 {
+			// No color prefix — render as plain text on bar
+			txt := strings.TrimSpace(seg)
+			fmt.Fprintf(&r.buf, "\x1b[0m%s\x1b[37m%s", barBg, txt)
 			col += len(txt)
-		} else {
-			r.buf.WriteString(seg)
-			col += len(seg)
+			continue
 		}
+		colorCode := strings.TrimSpace(parts[0])
+		txt := strings.TrimSpace(parts[1])
+
+		// Each segment is a pill: solid bg + white/dark text + padding
+		// Colors: solid background with contrasting text
+		var pillBg, pillFg string
+		switch colorCode {
+		case "M": // Magenta
+			pillBg = "\x1b[48;2;140;50;160m" // solid magenta
+			pillFg = "\x1b[97;1m"             // bright white bold
+		case "C": // Cyan
+			pillBg = "\x1b[48;2;30;130;140m" // solid teal/cyan
+			pillFg = "\x1b[97;1m"
+		case "G": // Green
+			pillBg = "\x1b[48;2;40;140;50m" // solid green
+			pillFg = "\x1b[97;1m"
+		case "R": // Red
+			pillBg = "\x1b[48;2;170;45;45m" // solid red
+			pillFg = "\x1b[97;1m"
+		case "Y": // Yellow
+			pillBg = "\x1b[48;2;180;160;40m" // solid yellow
+			pillFg = "\x1b[30;1m"             // dark text on yellow
+		case "D": // Dim — no pill, just dim text on bar bg
+			fmt.Fprintf(&r.buf, "\x1b[0m%s\x1b[2;37m%s", barBg, txt)
+			col += len(txt)
+			continue
+		case "W": // White
+			pillBg = "\x1b[48;2;70;70;80m" // subtle gray pill
+			pillFg = "\x1b[97m"
+		default:
+			pillBg = "\x1b[48;2;60;60;70m"
+			pillFg = "\x1b[37m"
+		}
+
+		// Render pill: " text " with solid background
+		pill := fmt.Sprintf(" %s ", txt)
+		fmt.Fprintf(&r.buf, "\x1b[0m%s%s%s", pillBg, pillFg, pill)
+		col += len(pill)
 	}
-	// Fill rest of line
+
+	// Fill rest of line with bar background
+	fmt.Fprintf(&r.buf, "\x1b[0m%s", barBg)
 	for col < cols {
 		r.buf.WriteByte(' ')
 		col++
 	}
 	r.buf.WriteString("\x1b[0m")
-	r.prevFg = defaultColor
-	r.prevBg = defaultColor
+	r.prevFg = Color{Index: -2}
+	r.prevBg = Color{Index: -2}
 	r.prevAttr = 0
 }
 
@@ -1417,6 +1457,7 @@ type Magmux struct {
 	focused       *Pane
 	allPanes      []*Pane // leaf panes only
 	rows, cols    int
+	quitOnce      sync.Once
 	statusText    string
 	renderer      Renderer
 	rawState      *term.State
@@ -1427,6 +1468,9 @@ type Magmux struct {
 	gridMode      bool         // -g flag active
 	sockPath      string       // IPC socket path
 	sockListener  net.Listener // IPC socket listener
+	startedAt     time.Time    // when magmux started (for ticking clock)
+	lastClockSec  int64        // last rendered second (to know when to redraw clock)
+	autoExit      bool         // -w flag: quit automatically when all panes frozen
 }
 
 func (m *Magmux) init() error {
@@ -1730,6 +1774,16 @@ func (m *Magmux) focusNext() {
 	}
 }
 
+// allPanesFrozen returns true if every leaf pane is frozen (grid mode complete)
+func (m *Magmux) allPanesFrozen() bool {
+	for _, p := range m.allPanes {
+		if !p.gridFrozen {
+			return false
+		}
+	}
+	return len(m.allPanes) > 0
+}
+
 // findPaneAt returns the leaf pane at terminal coordinates (row, col)
 func (m *Magmux) findPaneAt(row, col int) *Pane {
 	return findPaneAtRecursive(m.root, row, col)
@@ -1756,15 +1810,40 @@ func (m *Magmux) inputLoop() {
 	// Buffered input reader — accumulates partial reads so escape sequences
 	// that span multiple read() calls are handled correctly.
 	inbuf := make([]byte, 0, 4096)
-	raw := make([]byte, 4096)
 	commandMode := false
 
-	for {
-		n, err := os.Stdin.Read(raw)
-		if err != nil {
-			return
+	// Read stdin in a goroutine so we can select on quit
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	readCh := make(chan readResult, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				cp := make([]byte, n)
+				copy(cp, buf[:n])
+				readCh <- readResult{data: cp}
+			}
+			if err != nil {
+				readCh <- readResult{err: err}
+				return
+			}
 		}
-		inbuf = append(inbuf, raw[:n]...)
+	}()
+
+	for {
+		select {
+		case <-m.quit:
+			return
+		case result := <-readCh:
+			if result.err != nil {
+				return
+			}
+			inbuf = append(inbuf, result.data...)
+		}
 
 		for len(inbuf) > 0 {
 			b := inbuf[0]
@@ -1773,7 +1852,7 @@ func (m *Magmux) inputLoop() {
 				commandMode = false
 				switch b {
 				case 'q':
-					close(m.quit)
+					m.quitOnce.Do(func() { close(m.quit) })
 					return
 				case '\t', 'o':
 					m.focusNext()
@@ -1782,6 +1861,14 @@ func (m *Magmux) inputLoop() {
 				}
 				inbuf = inbuf[1:]
 				continue
+			}
+
+			// In grid mode, when all panes are frozen: Escape, Enter, or Ctrl-C quits
+			if m.gridMode && m.allPanesFrozen() {
+				if b == 0x1b || b == '\r' || b == '\n' || b == 0x03 { // ESC, Enter, Ctrl-C
+					m.quitOnce.Do(func() { close(m.quit) })
+					return
+				}
 			}
 
 			if b == commandKey&0x1f { // Ctrl-G
@@ -2121,6 +2208,19 @@ func (m *Magmux) render() {
 		}
 	}
 
+	// Auto-exit: quit when all panes frozen and -w flag set
+	if m.autoExit && m.gridMode && m.allPanesFrozen() {
+		m.quitOnce.Do(func() { close(m.quit) })
+		return
+	}
+
+	// Ticking clock: force redraw every second for status bar elapsed time
+	nowSec := time.Now().Unix()
+	clockTick := nowSec != m.lastClockSec
+	if clockTick {
+		m.lastClockSec = nowSec
+	}
+
 	// Check if any pane has new content
 	anyDirty := false
 	for _, p := range m.allPanes {
@@ -2131,7 +2231,7 @@ func (m *Magmux) render() {
 		}
 		p.mu.Unlock()
 	}
-	if !anyDirty {
+	if !anyDirty && !clockTick {
 		// Even if no content changed, update cursor position (cheap)
 		if m.focused != nil && m.focused.screen != nil {
 			s := m.focused.screen
@@ -2172,14 +2272,14 @@ func (m *Magmux) render() {
 				durStr = fmt.Sprintf("%.1fs", elapsed.Seconds())
 			}
 
-			// Banner colors: bright green (28) for success, bright red (124) for failure
+			// Banner colors: muted green/red, not too bright
 			var bannerBg string
 			var statusText string
 			if code == 0 {
-				bannerBg = "48;5;28"
+				bannerBg = "48;2;40;140;40" // bright green banner
 				statusText = " \xe2\x9c\x93 DONE"
 			} else {
-				bannerBg = "48;5;124"
+				bannerBg = "48;2;180;40;40" // bright red banner
 				statusText = fmt.Sprintf(" \xe2\x9c\x97 FAIL (exit %d)", code)
 			}
 
@@ -2238,11 +2338,23 @@ func (m *Magmux) render() {
 		r.renderSelection(sel.pane)
 	}
 
-	// Status bar
-	if m.statusText == "" {
-		m.statusText = "C: magmux\tD: press Ctrl-G then q to quit\tD: Ctrl-G Tab to switch panes"
+	// Status bar with ticking elapsed time
+	statusDisplay := m.statusText
+	if statusDisplay == "" {
+		statusDisplay = "C: magmux\tD: Ctrl-G q quit\tD: Ctrl-G Tab switch"
 	}
-	r.renderStatusBar(m.rows-1, m.cols, m.statusText)
+	// Build ticking elapsed time string
+	elapsed := time.Since(m.startedAt)
+	var clockStr string
+	s := int(elapsed.Seconds())
+	if s < 60 {
+		clockStr = fmt.Sprintf("%ds", s)
+	} else if s < 3600 {
+		clockStr = fmt.Sprintf("%dm%02ds", s/60, s%60)
+	} else {
+		clockStr = fmt.Sprintf("%dh%02dm", s/3600, (s%3600)/60)
+	}
+	r.renderStatusBarWithClock(m.rows-1, m.cols, statusDisplay, clockStr)
 
 	// Show cursor at focused pane position
 	if m.focused != nil && m.focused.screen != nil {
@@ -2451,6 +2563,7 @@ func main() {
 	var customCmds []PaneConfig
 	var gridFile string
 	var statusFile string
+	autoExit := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-e":
@@ -2471,6 +2584,8 @@ func main() {
 				i++
 				statusFile = args[i]
 			}
+		case "-w":
+			autoExit = true
 		}
 	}
 
@@ -2483,7 +2598,7 @@ func main() {
 		commands = customCmds
 	}
 
-	mux := &Magmux{}
+	mux := &Magmux{startedAt: time.Now()}
 	if err := mux.init(); err != nil {
 		fmt.Fprintf(os.Stderr, "magmux: %v\n", err)
 		os.Exit(1)
@@ -2492,6 +2607,7 @@ func main() {
 
 	mux.statusBarFile = statusFile
 	mux.gridMode = gridMode
+	mux.autoExit = autoExit
 
 	// Start socket IPC BEFORE spawning panes so children get MAGMUX_SOCK
 	mux.startSocketIPC()

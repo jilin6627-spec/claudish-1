@@ -321,8 +321,10 @@ export async function runWithGrid(
       `if [ -n "$MAGMUX_SOCK" ]; then`,
       `  if [ $_ec -eq 0 ]; then`,
       `    echo '{"cmd":"tint","pane":${paneIndex},"color":"green"}' | nc -U "$MAGMUX_SOCK" -w 1 2>/dev/null;`,
+      `    echo '{"cmd":"overlay","pane":${paneIndex},"text":"DONE","color":"green"}' | nc -U "$MAGMUX_SOCK" -w 1 2>/dev/null;`,
       `  else`,
       `    echo '{"cmd":"tint","pane":${paneIndex},"color":"red"}' | nc -U "$MAGMUX_SOCK" -w 1 2>/dev/null;`,
+      `    echo '{"cmd":"overlay","pane":${paneIndex},"text":"FAIL","color":"red"}' | nc -U "$MAGMUX_SOCK" -w 1 2>/dev/null;`,
       `  fi;`,
       `fi;`,
       `exec sleep 86400`,
@@ -373,6 +375,9 @@ export async function runWithGrid(
   const spawnArgs = ["-g", gridfilePath, "-S", statusbarPath];
   if (mux.kind === "mtm") {
     spawnArgs.push("-t", "xterm-256color");
+  } else {
+    // magmux: auto-exit when all panes complete
+    spawnArgs.push("-w");
   }
   // magmux sets TERM=screen-256color internally — no -t flag needed
   const proc = spawn(mux.path, spawnArgs, {
