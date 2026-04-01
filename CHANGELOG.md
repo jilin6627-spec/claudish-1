@@ -2,6 +2,20 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.5.2] - 2026-04-01
+
+### Bug Fixes
+
+- poll token file for provider/quota in magmux status bar([`15adbb4`](https://github.com/MadAppGang/claudish/commit/15adbb488a85d9b8827ad4b4dc1bb776c8c52647))
+
+### Documentation
+
+- update CHANGELOG.md for v6.5.1([`6f31af7`](https://github.com/MadAppGang/claudish/commit/6f31af73460921abcc3d6a896c48f30b0dd36538))
+
+### Other Changes
+
+- bump to v6.5.2([`7b5a267`](https://github.com/MadAppGang/claudish/commit/7b5a2678339b79af1a73c8e18a3bd28de27aca06))
+
 ## [6.5.1] - 2026-04-01
 
 ### Bug Fixes
