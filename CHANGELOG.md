@@ -4,8 +4,13 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ## [6.6.0] - 2026-04-01
 
+### Bug Fixes
+
+- cleaner status bar — remove ok pill, provider as plain text, mini quota bar([`a9ad5be`](https://github.com/MadAppGang/claudish/commit/a9ad5be2098dad03932b5e31e439553f93436f09))
+
 ### Documentation
 
+- update CHANGELOG.md for v6.6.0([`5d186cb`](https://github.com/MadAppGang/claudish/commit/5d186cb84dfe695938c6e7f3d75a8e3d5b888798))
 - update CHANGELOG.md for v6.5.3([`76e4df5`](https://github.com/MadAppGang/claudish/commit/76e4df586c651289b17196366cd4f5711a320058))
 
 ### New Features
