@@ -2,6 +2,18 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.6.3] - 2026-04-06
+
+### Bug Fixes
+
+- handle magmux artifact names in release file preparation *(ci)* ([`c8aca08`](https://github.com/MadAppGang/claudish/commit/c8aca08575f3265c869ca85b7b79f04dad83f2a3))
+- v6.6.3 — reject sentinel model names in team orchestrator([`e485263`](https://github.com/MadAppGang/claudish/commit/e485263cfdd99aeda77b195fb7de572274c355ce))
+- reject sentinel model names in team orchestrator *(team)* ([`91ee9a8`](https://github.com/MadAppGang/claudish/commit/91ee9a811fb821dbd1f01214cdbfd977017ed96f))
+
+### Documentation
+
+- update CHANGELOG.md for v6.6.2([`4c071a6`](https://github.com/MadAppGang/claudish/commit/4c071a69e105daf92fb2967392b0637d1129074c))
+
 ## [6.6.2] - 2026-04-06
 
 ### Bug Fixes
