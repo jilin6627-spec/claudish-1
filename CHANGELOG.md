@@ -2,6 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.7.0] - 2026-04-06
+
+### Documentation
+
+- update CHANGELOG.md for v6.6.3([`dd7e6fb`](https://github.com/MadAppGang/claudish/commit/dd7e6fbe9d47df1ba63d4bfc30436ddbd7429c31))
+
+### New Features
+
+- v6.7.0 — replace mtm with magmux, improve catalog resolver, add OAuth manager([`6759005`](https://github.com/MadAppGang/claudish/commit/675900567be9f139aece1f674ed8f6880843bd89))
+
 ## [6.6.3] - 2026-04-06
 
 ### Bug Fixes
