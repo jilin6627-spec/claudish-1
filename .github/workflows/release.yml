@@ -17,15 +17,23 @@ jobs:
           - os: macos-latest
             target: bun-darwin-arm64
             artifact: claudish-darwin-arm64
+            goos: darwin
+            goarch: arm64
           - os: macos-15-intel
             target: bun-darwin-x64
             artifact: claudish-darwin-x64
+            goos: darwin
+            goarch: amd64
           - os: ubuntu-latest
             target: bun-linux-x64
             artifact: claudish-linux-x64
+            goos: linux
+            goarch: amd64
           - os: ubuntu-24.04-arm
             target: bun-linux-arm64
             artifact: claudish-linux-arm64
+            goos: linux
+            goarch: arm64
 
     runs-on: ${{ matrix.os }}
     env:
@@ -38,6 +46,22 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build magmux
+        run: |
+          cd packages/cli/native/magmux
+          # Build with Go's arch names
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o magmux-build .
+          # Rename to Node.js platform-arch convention (amd64 → x64)
+          NODE_ARCH="${{ matrix.goarch }}"
+          if [ "$NODE_ARCH" = "amd64" ]; then NODE_ARCH="x64"; fi
+          mv magmux-build "magmux-${{ matrix.goos }}-${NODE_ARCH}"
+          ls -la magmux-*
 
       - name: Install dependencies
         run: bun install
@@ -59,11 +83,17 @@ jobs:
           codesign --force --deep --sign - ${{ matrix.artifact }}
           codesign -v ${{ matrix.artifact }}
 
-      - name: Upload artifact
+      - name: Upload CLI artifact
         uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
+
+      - name: Upload magmux artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: magmux-${{ matrix.artifact }}
+          path: packages/cli/native/magmux/magmux-*
 
   release:
     needs: build
@@ -196,12 +226,28 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Download magmux binaries
+        uses: actions/download-artifact@v5
+        with:
+          pattern: magmux-*
+          path: magmux-artifacts
+
+      - name: Install magmux binaries
+        run: |
+          mkdir -p packages/cli/native/magmux
+          for dir in magmux-artifacts/*/; do
+            cp "$dir"/magmux-* packages/cli/native/magmux/ 2>/dev/null || true
+          done
+          chmod +x packages/cli/native/magmux/magmux-* 2>/dev/null || true
+          echo "Magmux binaries:"
+          ls -la packages/cli/native/magmux/
+
       - name: Update recommended models from OpenRouter
         run: |
-          echo "🔄 Fetching latest model data from OpenRouter..."
+          echo "Fetching latest model data from OpenRouter..."
           bun scripts/update-models.ts
           echo ""
-          echo "📋 Updated recommended-models.json:"
+          echo "Updated recommended-models.json:"
           cat packages/cli/recommended-models.json | head -50
 
       - name: Build packages
@@ -216,7 +262,7 @@ jobs:
             delete pkg.dependencies['@claudish/core'];
             // Use local files, not relative paths to root
             // native/mtm/mtm-* includes platform-specific mtm binaries (terminal multiplexer)
-            pkg.files = ['dist/', 'native/mtm/mtm-*', 'AI_AGENT_GUIDE.md', 'recommended-models.json', 'skills/'];
+            pkg.files = ['dist/', 'native/magmux/magmux-*', 'AI_AGENT_GUIDE.md', 'recommended-models.json', 'skills/'];
             require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2));
           "
           echo 'Modified package.json:'
