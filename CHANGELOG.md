@@ -6,10 +6,12 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
+- use npm@11 for OIDC publish compatibility *(ci)* ([`f0a746e`](https://github.com/MadAppGang/claudish/commit/f0a746edb08219210f0628d0a119f4fdd14791a3))
 - v6.6.2 — Gemini image translation, CI npm fix([`bba0327`](https://github.com/MadAppGang/claudish/commit/bba03275bbfaf9cb8448eff00723d800d2094341))
 
 ### Documentation
 
+- update CHANGELOG.md for v6.6.2([`fe30c6b`](https://github.com/MadAppGang/claudish/commit/fe30c6b56f0243da48c726baca7b0f6544d154f8))
 - update CHANGELOG.md for v6.6.1([`5fd634b`](https://github.com/MadAppGang/claudish/commit/5fd634b40022fd2b8d332372db9091a1ab5119b5))
 
 ## [6.6.1] - 2026-04-06
