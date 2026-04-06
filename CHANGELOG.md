@@ -6,6 +6,7 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Bug Fixes
 
+- use Node 24 + always-auth for npm OIDC trusted publishing *(ci)* ([`9cfb12a`](https://github.com/MadAppGang/claudish/commit/9cfb12a86d21961fe01ec07894a144ac2af49230))
 - remove FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 from publish-npm *(ci)* ([`f44750d`](https://github.com/MadAppGang/claudish/commit/f44750df739616e942418ef4b9bc22124e89ccde))
 - use Node 20 for npm publish — Node 22.22.2 npm is broken *(ci)* ([`0414155`](https://github.com/MadAppGang/claudish/commit/0414155ef090a8a2cd1ed3cb5b40d6d417c9ecfd))
 - use npm@11 for OIDC publish compatibility *(ci)* ([`f0a746e`](https://github.com/MadAppGang/claudish/commit/f0a746edb08219210f0628d0a119f4fdd14791a3))
@@ -13,6 +14,7 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ### Documentation
 
+- update CHANGELOG.md for v6.6.2([`dba5006`](https://github.com/MadAppGang/claudish/commit/dba5006456b9d9d6dc16e7581b95c206c9b71dce))
 - update CHANGELOG.md for v6.6.2([`84a403b`](https://github.com/MadAppGang/claudish/commit/84a403b8c27326ea975668d5ae5ce6e22ddd7863))
 - update CHANGELOG.md for v6.6.2([`ade7e09`](https://github.com/MadAppGang/claudish/commit/ade7e0933686c4f045916d52bc1780f4d511f25b))
 - update CHANGELOG.md for v6.6.2([`fe30c6b`](https://github.com/MadAppGang/claudish/commit/fe30c6b56f0243da48c726baca7b0f6544d154f8))
