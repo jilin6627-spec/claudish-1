@@ -176,8 +176,7 @@ async function runCli() {
   const { initLogger, getLogFilePath, getAlwaysOnLogPath, setDiagOutput } = await import(
     "./logger.js"
   );
-  const { createDiagOutput, LogFileDiagOutput } = await import("./diag-output.js");
-  const { tryCreateMtmRunner } = await import("./pty-diag-runner.js");
+  const { createDiagOutput } = await import("./diag-output.js");
   const { findAvailablePort } = await import("./port-manager.js");
   const { createProxyServer } = await import("./proxy-server.js");
   const { checkForUpdates } = await import("./update-checker.js");
@@ -410,42 +409,19 @@ async function runCli() {
       }
     );
 
-    // Create mtm runner for built-in split view (mtm terminal multiplexer)
-    // Skip if diagMode explicitly set to tmux/logfile/off
-    const needsMtm =
-      cliConfig.interactive && (cliConfig.diagMode === "auto" || cliConfig.diagMode === "pty");
-    const mtmRunner = needsMtm ? await tryCreateMtmRunner() : null;
-
-    // Set model name and port on the status bar
-    if (mtmRunner) {
-      if (explicitModel) mtmRunner.setModel(explicitModel);
-      mtmRunner.setPort(port);
-    }
-
-    // Route diagnostic output: mtm → tmux pane → log file (priority order)
+    // Route diagnostic output to log file
     const diag = createDiagOutput({
       interactive: cliConfig.interactive,
-      mtmRunner,
       diagMode: cliConfig.diagMode,
     });
     if (cliConfig.interactive) {
       setDiagOutput(diag);
-
-      // If no mtm and no tmux, tell the user where to find diagnostic output
-      if (
-        !mtmRunner &&
-        !process.env.TMUX &&
-        !cliConfig.quiet &&
-        diag instanceof LogFileDiagOutput
-      ) {
-        console.log(`[claudish] Diagnostic log: ${diag.getLogPath()}`);
-      }
     }
 
     // Run Claude Code with proxy
     let exitCode = 0;
     try {
-      exitCode = await runClaudeWithProxy(cliConfig, proxy.url, () => diag.cleanup(), mtmRunner);
+      exitCode = await runClaudeWithProxy(cliConfig, proxy.url, () => diag.cleanup());
     } finally {
       // Clear diagOutput BEFORE cleanup to prevent write-after-end
       setDiagOutput(null);

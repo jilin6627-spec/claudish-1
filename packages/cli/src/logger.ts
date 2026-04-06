@@ -278,7 +278,7 @@ export function log(message: string, forceConsole = false): void {
  */
 export function logStderr(message: string): void {
   if (diagOutput) {
-    // Route to DiagOutput (file or tmux pane) instead of polluting stderr
+    // Route to DiagOutput (log file) instead of polluting stderr
     diagOutput.write(message);
   } else if (!stderrQuiet) {
     process.stderr.write(`[claudish] ${message}\n`);

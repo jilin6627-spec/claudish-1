@@ -142,6 +142,7 @@ export const telemetryIngest = onRequest(
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 const FIRECRAWL_API_KEY = defineSecret("FIRECRAWL_API_KEY");
 const GOOGLE_GEMINI_API_KEY = defineSecret("GOOGLE_GEMINI_API_KEY");
+const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 const TOGETHER_API_KEY = defineSecret("TOGETHER_API_KEY");
 const MISTRAL_API_KEY = defineSecret("MISTRAL_API_KEY");
 const DEEPSEEK_API_KEY = defineSecret("DEEPSEEK_API_KEY");
@@ -152,6 +153,7 @@ const CATALOG_SECRETS = [
   ANTHROPIC_API_KEY,
   FIRECRAWL_API_KEY,
   GOOGLE_GEMINI_API_KEY,
+  OPENAI_API_KEY,
   TOGETHER_API_KEY,
   MISTRAL_API_KEY,
   DEEPSEEK_API_KEY,

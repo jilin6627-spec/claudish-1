@@ -26,14 +26,14 @@ export class AnthropicPricingScraper extends BaseCollector {
           providerHint: "anthropic",
           prompt: PRICING_PROMPT,
           waitFor: 5000,
-          timeout: 60000,
+          timeout: 120000,
         },
         {
           url: MODELS_URL,
           providerHint: "anthropic",
           prompt: MODELS_PROMPT,
           waitFor: 5000,
-          timeout: 60000,
+          timeout: 120000,
         },
       ]);
 

@@ -77,6 +77,12 @@ export class LiteLLMCatalogResolver implements ModelCatalogResolver {
     return _memCache !== null && _memCache.length > 0;
   }
 
+  async ensureReady(_timeoutMs: number): Promise<void> {
+    // LiteLLM cache is disk-based (written by fetchLiteLLMModels), already fast.
+    // Just trigger a warmCache read if not yet warm.
+    if (!this.isCacheWarm()) await this.warmCache();
+  }
+
   private _getModelIds(): string[] | null {
     if (_memCache) return _memCache;
 

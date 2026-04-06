@@ -41,6 +41,33 @@ export async function handleQueryModels(req: Request, res: Response): Promise<vo
     return;
   }
 
+  // ── Slim catalog query: ?catalog=slim ────────────────────────────────────
+  // Returns a slim projection for CLI model resolution (modelId, aliases, sources).
+  // Higher limit (1000) since this powers the catalog resolver, not user-facing display.
+  if (req.query.catalog === "slim") {
+    const catalogLimit = Math.min(parseInt(String(req.query.limit ?? "1000"), 10), 2000);
+    let catalogQuery: Query = db.collection("models") as CollectionReference;
+    catalogQuery = catalogQuery.where("status", "==", "active");
+    catalogQuery = catalogQuery.limit(catalogLimit);
+
+    try {
+      const snap = await catalogQuery.get();
+      const models = snap.docs.map(d => {
+        const data = d.data() as ModelDoc;
+        return {
+          modelId: data.modelId,
+          aliases: data.aliases,
+          sources: data.sources,
+        };
+      });
+      res.status(200).json({ models, total: models.length });
+    } catch (err) {
+      console.error("[catalog] Slim catalog query failed:", err);
+      res.status(500).json({ error: "Internal error" });
+    }
+    return;
+  }
+
   // ── Standard model list query ────────────────────────────────────────────
   let query: Query = db.collection("models") as CollectionReference;
 

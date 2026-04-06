@@ -18,8 +18,8 @@ export class DeepSeekScraper extends BaseCollector {
         SOURCE_URL,
         "deepseek",
         PROMPT,
-        5000,
-        60000
+        8000,
+        120000
       );
 
       const models: RawModel[] = extracted.map(m => ({

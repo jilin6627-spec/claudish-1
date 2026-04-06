@@ -35,8 +35,8 @@
  *   minimax/*              -> minimax (direct)
  *   moonshot/*, kimi-*     -> kimi (direct)
  *   zhipu/*, glm-*         -> glm (direct)
- *   deepseek/*             -> openrouter (no direct API)
- *   x-ai/*, grok-*         -> openrouter (no direct API)
+ *   deepseek/*, deepseek-*  -> auto-routed (no direct API, falls to OpenRouter)
+ *   x-ai/*, grok-*         -> xai (direct with XAI_API_KEY, else OpenRouter)
  *   qwen/*,  qwen*         -> auto-routed (no direct API, falls to OpenRouter)
  *   anthropic/*            -> native-anthropic
  *   (anything else with /) -> openrouter

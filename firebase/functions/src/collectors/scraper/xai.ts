@@ -18,8 +18,8 @@ export class XAIScraper extends BaseCollector {
         SOURCE_URL,
         "xai grok",
         PROMPT,
-        5000,
-        60000
+        8000,
+        120000
       );
 
       const models: RawModel[] = extracted.map(m => ({

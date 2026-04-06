@@ -73,3 +73,6 @@ test-results/
 # Smoke test results
 packages/cli/results/*.json
 .worktrees
+
+# Model validation
+validation/

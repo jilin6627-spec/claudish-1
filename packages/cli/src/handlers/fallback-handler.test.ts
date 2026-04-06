@@ -221,8 +221,9 @@ describe("Group 1: Fallback chain construction", () => {
 // ---------------------------------------------------------------------------
 
 describe("Group 2: Real API — fallback response structure", () => {
-  test("minimax-m2.5 without prefix returns success or structured fallback error", async () => {
-    if (!hasAnyCredentials()) return;
+  test.skipIf(!hasAnyCredentials())(
+    "minimax-m2.5 without prefix returns success or structured fallback error",
+    async () => {
     const port = await ensureProxy();
 
     const { ok, body } = await sendMessage(port, "minimax-m2.5");
@@ -247,11 +248,12 @@ describe("Group 2: Real API — fallback response structure", () => {
     }
   }, 30_000);
 
-  test("gemini-2.0-flash without prefix returns success or structured fallback error", async () => {
-    if (!hasAnyCredentials()) return;
+  test.skipIf(!hasAnyCredentials())(
+    "glm-5-turbo without prefix returns success or structured fallback error",
+    async () => {
     const port = await ensureProxy();
 
-    const { ok, body } = await sendMessage(port, "gemini-2.0-flash");
+    const { ok, body } = await sendMessage(port, "glm-5-turbo");
 
     if (ok) {
       expect(body.content).toBeDefined();
@@ -262,8 +264,9 @@ describe("Group 2: Real API — fallback response structure", () => {
     }
   }, 30_000);
 
-  test("kimi-k2.5 without prefix returns success or structured fallback error", async () => {
-    if (!hasAnyCredentials()) return;
+  test.skipIf(!hasAnyCredentials())(
+    "kimi-k2.5 without prefix returns success or structured fallback error",
+    async () => {
     const port = await ensureProxy();
 
     const { ok, body } = await sendMessage(port, "kimi-k2.5");
@@ -283,8 +286,9 @@ describe("Group 2: Real API — fallback response structure", () => {
 // ---------------------------------------------------------------------------
 
 describe("Group 3: Real API — multi-provider fallback in action", () => {
-  test("bare model tries multiple providers and either succeeds or returns an error", async () => {
-    if (!hasAnyCredentials()) return;
+  test.skipIf(!hasAnyCredentials())(
+    "bare model tries multiple providers and either succeeds or returns an error",
+    async () => {
     const port = await ensureProxy();
 
     const { ok, body } = await sendMessage(port, "minimax-m2.5");
@@ -316,8 +320,9 @@ describe("Group 3: Real API — multi-provider fallback in action", () => {
     }
   }, 30_000);
 
-  test("completely unknown model fails with a structured error", async () => {
-    if (!hasAnyCredentials()) return;
+  test.skipIf(!hasAnyCredentials())(
+    "completely unknown model fails with a structured error",
+    async () => {
     const port = await ensureProxy();
 
     const { ok, body } = await sendMessage(port, "nonexistent-model-xyz-999");
@@ -336,8 +341,9 @@ describe("Group 3: Real API — multi-provider fallback in action", () => {
 // ---------------------------------------------------------------------------
 
 describe("Group 4: Real API — explicit provider skips fallback", () => {
-  test("mm@minimax-m2.5 (explicit) does NOT use fallback chain", async () => {
-    if (!process.env.MINIMAX_API_KEY) return;
+  test.skipIf(!process.env.MINIMAX_API_KEY)(
+    "mm@minimax-m2.5 (explicit) does NOT use fallback chain",
+    async () => {
     const port = await ensureProxy();
 
     const result = await sendMessage(port, "mm@minimax-m2.5");
@@ -351,8 +357,9 @@ describe("Group 4: Real API — explicit provider skips fallback", () => {
     // Either succeeds (direct MiniMax) or returns a single-provider error (not wrapped in fallback)
   }, 30_000);
 
-  test("or@minimax/minimax-m2.5 (explicit OpenRouter) goes direct", async () => {
-    if (!process.env.OPENROUTER_API_KEY) return;
+  test.skipIf(!process.env.OPENROUTER_API_KEY)(
+    "or@minimax/minimax-m2.5 (explicit OpenRouter) goes direct",
+    async () => {
     const port = await ensureProxy();
 
     const { ok, body } = await sendMessage(port, "or@minimax/minimax-m2.5");

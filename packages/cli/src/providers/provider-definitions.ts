@@ -590,6 +590,23 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     description: "Local MLX (mlx@)",
   },
 
+  // ── DeepSeek (auto-routed, no direct API) ───────────────────────────
+  {
+    name: "deepseek",
+    displayName: "DeepSeek",
+    transport: "openai",
+    baseUrl: "",
+    apiPath: "",
+    apiKeyEnvVar: "",
+    apiKeyDescription: "DeepSeek (auto-routed via OpenRouter)",
+    apiKeyUrl: "",
+    shortcuts: ["ds"],
+    shortestPrefix: "ds",
+    legacyPrefixes: [],
+    nativeModelPatterns: [{ pattern: /^deepseek\//i }, { pattern: /^deepseek-/i }],
+    description: "DeepSeek (auto-routed via OpenRouter)",
+  },
+
   // ── Qwen (auto-routed, no direct API) ──────────────────────────────
   {
     name: "qwen",

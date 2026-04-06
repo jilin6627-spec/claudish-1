@@ -39,6 +39,13 @@ export class OpenCodeZenCollector extends BaseCollector {
         throw new Error(`OpenCode Zen API ${resp.status}: ${await resp.text()}`);
       }
 
+      // Guard against non-JSON responses (endpoint sometimes returns plain text "Not Found")
+      const contentType = resp.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        const body = await resp.text();
+        throw new Error(`OpenCode Zen API returned non-JSON (${contentType}): ${body.slice(0, 100)}`);
+      }
+
       const data = await resp.json() as ZenListResponse;
 
       for (const m of data.data ?? []) {

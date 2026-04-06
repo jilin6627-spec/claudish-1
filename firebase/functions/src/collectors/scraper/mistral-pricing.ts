@@ -21,8 +21,8 @@ export class MistralPricingScraper extends BaseCollector {
         SOURCE_URL,
         "mistral",
         PROMPT,
-        5000,
-        60000
+        8000,
+        120000
       );
 
       const models: RawModel[] = extracted.map(m => ({

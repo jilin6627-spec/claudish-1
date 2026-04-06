@@ -15,6 +15,8 @@ const OPENROUTER_VENDOR_MAP: Record<string, string> = {
   openrouter: "openrouter",
   ollamacloud: "meta-llama",
   qwen: "qwen",
+  deepseek: "deepseek",
+  grok: "x-ai",
   // poe intentionally excluded - not available on OpenRouter
 };
 

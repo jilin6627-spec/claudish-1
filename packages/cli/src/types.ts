@@ -37,7 +37,7 @@ export interface ClaudishConfig {
   summarizeTools?: boolean; // Summarize tool descriptions to reduce prompt size for local models
 
   noLogs: boolean; // Disable always-on structural logging
-  diagMode: "auto" | "pty" | "tmux" | "logfile" | "off"; // Diagnostic output mode
+  diagMode: "auto" | "logfile" | "off"; // Diagnostic output mode
 }
 
 // Anthropic API Types

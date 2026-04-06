@@ -43,6 +43,7 @@ import {
   resolveModelNameSync,
   logResolution,
   warmAllCatalogs,
+  ensureCatalogReady,
 } from "./providers/model-catalog-resolver.js";
 import { FallbackHandler } from "./handlers/fallback-handler.js";
 import type { FallbackCandidate } from "./handlers/fallback-handler.js";
@@ -320,7 +321,7 @@ export async function createProxyServer(
     return "auto-route";
   };
 
-  const getHandlerForRequest = (requestedModel: string): ModelHandler => {
+  const getHandlerForRequest = async (requestedModel: string): Promise<ModelHandler> => {
     // 1. Monitor Mode Override
     if (monitorMode) return nativeHandler;
 
@@ -353,10 +354,12 @@ export async function createProxyServer(
 
     // 2b. Catalog resolution — resolve vendor prefix for OpenRouter and LiteLLM
     // This must happen after target is determined but before handler construction.
-    // resolveModelNameSync is synchronous (uses in-memory cache + readFileSync).
+    // ensureCatalogReady awaits the catalog if not yet warm (with 5s timeout).
+    // resolveModelNameSync then reads from the in-memory cache synchronously.
     {
       const parsedTarget = parseModelSpec(target);
       if (parsedTarget.provider === "openrouter" || parsedTarget.provider === "litellm") {
+        await ensureCatalogReady(parsedTarget.provider, 5000);
         const resolution = resolveModelNameSync(parsedTarget.model, parsedTarget.provider);
         logResolution(parsedTarget.model, resolution, options.quiet);
         if (resolution.wasResolved) {
@@ -381,6 +384,9 @@ export async function createProxyServer(
         if (fallbackHandlerCache.has(cacheKey)) {
           return fallbackHandlerCache.get(cacheKey)!;
         }
+
+        // Ensure catalog is warm before fallback chain builds OpenRouter routes
+        await ensureCatalogReady("openrouter", 5000);
 
         const matchedEntries = customRoutingRules
           ? matchRoutingRule(parsedForFallback.model, customRoutingRules)
@@ -470,7 +476,7 @@ export async function createProxyServer(
     try {
       const body = await c.req.json();
       const reqModel = body.model || "claude-3-opus-20240229";
-      const handler = getHandlerForRequest(reqModel);
+      const handler = await getHandlerForRequest(reqModel);
 
       // If native, we just forward. OpenRouter needs estimation.
       if (handler instanceof NativeHandler) {
@@ -496,7 +502,7 @@ export async function createProxyServer(
   app.post("/v1/messages", async (c) => {
     try {
       const body = await c.req.json();
-      const handler = getHandlerForRequest(body.model);
+      const handler = await getHandlerForRequest(body.model);
 
       // Route
       return handler.handle(c, body);

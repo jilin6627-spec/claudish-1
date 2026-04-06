@@ -21,7 +21,7 @@ export class GLMScraper extends BaseCollector {
         "zhipu glm",
         PROMPT,
         8000,
-        60000
+        120000
       );
 
       const models: RawModel[] = extracted.map(m => ({

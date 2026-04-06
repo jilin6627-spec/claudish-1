@@ -48,6 +48,13 @@ export interface ModelCatalogResolver {
    * Used by the warmup strategy to decide whether to skip or refresh.
    */
   isCacheWarm(): boolean;
+
+  /**
+   * Wait for the cache to become ready (warm), with a timeout.
+   * If the cache is already warm, resolves immediately.
+   * If warming fails or times out, resolves without error (graceful degradation).
+   */
+  ensureReady(timeoutMs: number): Promise<void>;
 }
 
 /**
@@ -127,6 +134,22 @@ export function logResolution(
       `[Model] Resolved "${userInput}" → "${result.resolvedId}" (${result.sourceLabel})\n`
     );
   }
+}
+
+/**
+ * Ensure a specific provider's catalog is ready for synchronous resolution.
+ * If already warm, resolves immediately. Otherwise waits up to timeoutMs.
+ * Gracefully degrades on timeout — never throws.
+ *
+ * Call this before resolveModelNameSync() to guarantee the cache is populated.
+ */
+export async function ensureCatalogReady(
+  provider: string,
+  timeoutMs = 5000
+): Promise<void> {
+  const resolver = getResolver(provider);
+  if (!resolver || resolver.isCacheWarm()) return;
+  await resolver.ensureReady(timeoutMs);
 }
 
 /**

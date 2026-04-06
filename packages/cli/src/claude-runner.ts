@@ -6,9 +6,6 @@ import { join, basename } from "node:path";
 import { ENV } from "./config.js";
 import type { ClaudishConfig } from "./types.js";
 import { parseModelSpec } from "./providers/model-parser.js";
-import type { MtmDiagRunner } from "./pty-diag-runner.js";
-// Backward-compat alias
-type PtyDiagRunner = MtmDiagRunner;
 
 /**
  * Check if any resolved model mapping targets a native Anthropic model (claude-*).
@@ -260,8 +257,7 @@ function mergeUserSettingsIfPresent(
 export async function runClaudeWithProxy(
   config: ClaudishConfig,
   proxyUrl: string,
-  onCleanup?: () => void,
-  ptyDiagRunner?: PtyDiagRunner | null
+  onCleanup?: () => void
 ): Promise<number> {
   // Use actual OpenRouter model ID (no translation)
   // This ensures ANY model works, not just our shortlist
@@ -420,51 +416,31 @@ export async function runClaudeWithProxy(
     process.exit(1);
   }
 
-  // Spawn claude CLI process.
-  // MTM path: when ptyDiagRunner (MtmDiagRunner) is available in interactive mode,
-  // delegate spawning to mtm. mtm launches with `stdio: inherit`, takes over the
-  // terminal, runs Claude Code in the top pane (real PTY), and shows diagnostics
-  // in the bottom pane via tail -f on the diag log.
-  // Fallback path: standard stdio: 'inherit' spawn (non-interactive or no mtm).
+  // Spawn Claude Code with direct stdio: 'inherit' — no terminal multiplexer wrapper.
   const needsShell = isWindows() && claudeBinary.endsWith(".cmd");
   const spawnCommand = needsShell ? `"${claudeBinary}"` : claudeBinary;
 
-  let exitCode: number;
+  const proc = spawn(spawnCommand, claudeArgs, {
+    env,
+    stdio: "inherit",
+    shell: needsShell,
+  });
 
-  if (config.interactive && ptyDiagRunner) {
-    // MTM path: mtm handles terminal setup and launches Claude Code
-    exitCode = await ptyDiagRunner.run(spawnCommand, claudeArgs, env);
+  // Handle process termination signals (includes cleanup)
+  setupSignalHandlers(proc, tempSettingsPath, config.quiet, onCleanup);
 
-    // Clean up temporary settings file
-    try {
-      unlinkSync(tempSettingsPath);
-    } catch {
-      // Ignore cleanup errors
-    }
-  } else {
-    // Standard stdio: 'inherit' path (non-interactive or PTY unavailable)
-    const proc = spawn(spawnCommand, claudeArgs, {
-      env,
-      stdio: "inherit",
-      shell: needsShell,
+  // Wait for claude to exit
+  const exitCode = await new Promise<number>((resolve) => {
+    proc.on("exit", (code) => {
+      resolve(code ?? 1);
     });
+  });
 
-    // Handle process termination signals (includes cleanup)
-    setupSignalHandlers(proc, tempSettingsPath, config.quiet, onCleanup);
-
-    // Wait for claude to exit
-    exitCode = await new Promise<number>((resolve) => {
-      proc.on("exit", (code) => {
-        resolve(code ?? 1);
-      });
-    });
-
-    // Clean up temporary settings file
-    try {
-      unlinkSync(tempSettingsPath);
-    } catch {
-      // Ignore cleanup errors
-    }
+  // Clean up temporary settings file
+  try {
+    unlinkSync(tempSettingsPath);
+  } catch {
+    // Ignore cleanup errors
   }
 
   return exitCode;
@@ -491,7 +467,7 @@ function setupSignalHandlers(
         console.log(`\n[claudish] Received ${signal}, shutting down...`);
       }
       proc.kill();
-      // Run optional cleanup (e.g. close diag tmux pane) before exit
+      // Run optional cleanup before exit
       if (onCleanup) {
         try {
           onCleanup();

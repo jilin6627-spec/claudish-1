@@ -5,9 +5,11 @@ import type {
 import { CONFIDENCE_RANK } from "./schema.js";
 
 // Sanity bounds for pricing (USD per million tokens)
+// min: 0 allows free-tier models (Gemini Flash free, GLM-4-Flash, etc.)
+// Negative values (e.g. -1000000 from bad scrapes) are still rejected
 const PRICING_BOUNDS = {
-  input: { min: 0.001, max: 1000 },
-  output: { min: 0.001, max: 2000 },
+  input: { min: 0, max: 1000 },
+  output: { min: 0, max: 2000 },
 };
 
 // Sanity bounds for context window

@@ -123,8 +123,8 @@ export interface ClaudishProfileConfig {
   endpoints?: Record<string, string>;
   /** ISO timestamp when user confirmed auto-approve behavior. Absent = never confirmed. */
   autoApproveConfirmedAt?: string;
-  /** Diagnostic output mode: auto (default), pty, tmux, logfile, off */
-  diagMode?: "auto" | "pty" | "tmux" | "logfile" | "off";
+  /** Diagnostic output mode: auto (default), logfile, off */
+  diagMode?: "auto" | "logfile" | "off";
 }
 
 /**

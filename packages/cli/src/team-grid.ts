@@ -29,79 +29,35 @@ function formatElapsed(ms: number): string {
 
 // ─── Multiplexer Binary Detection ────────────────────────────────────────────
 
-interface MultiplexerBinary {
-  path: string;
-  kind: "magmux" | "mtm";
-}
-
 /**
- * Find a terminal multiplexer binary. Priority:
+ * Find the magmux binary. Priority:
  * 1. Dev-built magmux (native/magmux/magmux — freshest, has latest features)
  * 2. Bundled magmux (native/magmux/magmux-<platform>-<arch>)
  * 3. magmux in PATH
- * 4. Dev-built mtm (native/mtm/mtm) — fallback
- * 5. Bundled mtm (native/mtm/mtm-<platform>-<arch>) — fallback
- * 6. mtm in PATH (only our fork with -g) — fallback
  */
-function findMultiplexerBinary(): MultiplexerBinary {
+function findMagmuxBinary(): string {
   const thisFile = fileURLToPath(import.meta.url);
   const thisDir = dirname(thisFile);
   const pkgRoot = join(thisDir, "..");
   const platform = process.platform;
   const arch = process.arch;
 
-  // 1. Dev-built magmux (freshest, has latest features)
   const builtMagmux = join(pkgRoot, "native", "magmux", "magmux");
-  if (existsSync(builtMagmux)) return { path: builtMagmux, kind: "magmux" };
+  if (existsSync(builtMagmux)) return builtMagmux;
 
-  // 2. Bundled magmux binary
   const bundledMagmux = join(pkgRoot, "native", "magmux", `magmux-${platform}-${arch}`);
-  if (existsSync(bundledMagmux)) return { path: bundledMagmux, kind: "magmux" };
+  if (existsSync(bundledMagmux)) return bundledMagmux;
 
-  // 3. magmux in PATH
   try {
     const result = execSync("which magmux", { encoding: "utf-8" }).trim();
-    if (result) return { path: result, kind: "magmux" };
-  } catch {
-    /* not in PATH */
-  }
-
-  // 4. Dev-built mtm (fallback)
-  const builtMtm = join(pkgRoot, "native", "mtm", "mtm");
-  if (existsSync(builtMtm)) return { path: builtMtm, kind: "mtm" };
-
-  // 5. Bundled mtm binary (fallback)
-  const bundledMtm = join(pkgRoot, "native", "mtm", `mtm-${platform}-${arch}`);
-  if (existsSync(bundledMtm)) return { path: bundledMtm, kind: "mtm" };
-
-  // 6. mtm in PATH (fallback — only our fork with -g)
-  try {
-    const result = execSync("which mtm", { encoding: "utf-8" }).trim();
-    if (result && isMtmForkWithGrid(result)) return { path: result, kind: "mtm" };
+    if (result) return result;
   } catch {
     /* not in PATH */
   }
 
   throw new Error(
-    "No terminal multiplexer found. Install magmux (recommended) or build mtm:\n" +
-      "  brew install MadAppGang/tap/magmux\n" +
-      "  # or: cd packages/cli/native/mtm && make"
+    "magmux not found. Install it:\n  brew install MadAppGang/tap/magmux"
   );
-}
-
-/**
- * Check if an mtm binary is our fork with -g (grid) support.
- */
-function isMtmForkWithGrid(binPath: string): boolean {
-  try {
-    const output = execSync(`"${binPath}" --help 2>&1 || true`, {
-      encoding: "utf-8",
-      timeout: 2000,
-    });
-    return output.includes("-g ");
-  } catch {
-    return false;
-  }
 }
 
 // ─── Status Bar Rendering ─────────────────────────────────────────────────────
@@ -116,7 +72,7 @@ interface GridStatusCounts {
 }
 
 /**
- * Render the aggregate team status bar in mtm's tab-separated pill format.
+ * Render the aggregate team status bar in magmux's tab-separated pill format.
  * Colors: M=magenta, C=cyan, G=green, R=red, D=dim, W=white
  */
 function renderGridStatusBar(counts: GridStatusCounts): string {
@@ -163,6 +119,7 @@ interface PollState {
   timeoutMs: number;
   statusbarPath: string;
   completedAtMs: number | null; // frozen elapsed time when all done
+  interactive: boolean;
 }
 
 /**
@@ -215,8 +172,8 @@ function pollStatus(state: PollState): boolean {
       if (isSuccess) done++;
       else failed++;
     } else {
-      // Check for timeout
-      if (elapsedMs > timeoutMs) {
+      // Check for timeout (disabled in interactive mode)
+      if (!state.interactive && elapsedMs > timeoutMs) {
         const newState: ModelStatus = {
           ...current,
           state: "TIMEOUT",
@@ -271,10 +228,10 @@ function pollStatus(state: PollState): boolean {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Run multiple models in grid mode using mtm.
+ * Run multiple models in grid mode using magmux.
  *
  * Sets up the session directory, writes a gridfile with one claudish command
- * per line, launches mtm with the grid, and polls for completion.
+ * per line, launches magmux with the grid, and polls for completion.
  *
  * @param sessionPath  Absolute path to the session directory
  * @param models       Model IDs to run in parallel
@@ -285,9 +242,10 @@ export async function runWithGrid(
   sessionPath: string,
   models: string[],
   input: string,
-  opts?: { timeout?: number }
+  opts?: { timeout?: number; interactive?: boolean }
 ): Promise<TeamStatus> {
   const timeoutMs = (opts?.timeout ?? 300) * 1000;
+  const interactive = opts?.interactive ?? false;
 
   // 1. Set up session directory (manifest.json, status.json, work dirs, input.md)
   const manifest: TeamManifest = setupSession(sessionPath, models, input);
@@ -311,10 +269,17 @@ export async function runWithGrid(
   const gridLines = Object.entries(manifest.models).map(([anonId]) => {
     const errorLog = join(sessionPath, "errors", `${anonId}.log`);
     const exitCodeFile = join(sessionPath, "work", anonId, ".exit-code");
-    // Run claudish in print mode — streams text to stdout without alternate screen.
-    // -p = print mode (headless), -v = verbose claudish logs, -y = auto-approve.
     const model = manifest.models[anonId].model;
     const paneIndex = Object.keys(manifest.models).indexOf(anonId);
+
+    if (interactive) {
+      // Interactive mode: full claudish TUI session per pane.
+      // magmux detects completion natively via bracketed paste signal (inputReady).
+      // No timeout — pane stays interactive for continued use.
+      return `claudish --model ${model} --dangerously-skip-permissions '${prompt}'`;
+    }
+
+    // Default mode: claudish print mode with IPC tint/overlay on completion.
     return [
       `claudish --model ${model} -y -v '${prompt}' 2>${errorLog};`,
       `_ec=$?; echo $_ec > ${exitCodeFile};`,
@@ -332,8 +297,8 @@ export async function runWithGrid(
   });
   writeFileSync(gridfilePath, gridLines.join("\n") + "\n", "utf-8");
 
-  // 4. Find multiplexer binary (prefers magmux over mtm)
-  const mux = findMultiplexerBinary();
+  // 4. Find magmux binary
+  const magmuxPath = findMagmuxBinary();
 
   // 5. Set up status bar file path
   const statusbarPath = join(sessionPath, "statusbar.txt");
@@ -365,22 +330,19 @@ export async function runWithGrid(
     timeoutMs,
     statusbarPath,
     completedAtMs: null,
+    interactive,
   };
 
   const pollInterval = setInterval(() => {
     pollStatus(pollState);
   }, 500);
 
-  // 7. Spawn multiplexer with grid mode
+  // 7. Spawn magmux with grid mode
   const spawnArgs = ["-g", gridfilePath, "-S", statusbarPath];
-  if (mux.kind === "mtm") {
-    spawnArgs.push("-t", "xterm-256color");
-  } else {
-    // magmux: auto-exit when all panes complete
-    spawnArgs.push("-w");
+  if (!interactive) {
+    spawnArgs.push("-w"); // auto-exit when all panes complete
   }
-  // magmux sets TERM=screen-256color internally — no -t flag needed
-  const proc = spawn(mux.path, spawnArgs, {
+  const proc = spawn(magmuxPath, spawnArgs, {
     stdio: "inherit",
     env: { ...process.env },
   });

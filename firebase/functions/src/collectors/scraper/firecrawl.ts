@@ -151,7 +151,7 @@ async function firecrawlScrape<T>(
   schema: object,
   prompt: string,
   waitFor = 5000,
-  timeout = 60000
+  timeout = 120000
 ): Promise<T> {
   const resp = await fetch("https://api.firecrawl.dev/v1/scrape", {
     method: "POST",
@@ -198,7 +198,7 @@ export async function extractModelsWithFirecrawl(
   providerHint: string,
   prompt: string,
   waitFor = 5000,
-  timeout = 60000
+  timeout = 120000
 ): Promise<ExtractedModel[]> {
   const fullPrompt = `${prompt} Provider context: ${providerHint}`;
   const result = await firecrawlScrape<FirecrawlExtractDataModel>(

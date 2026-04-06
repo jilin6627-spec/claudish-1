@@ -21,7 +21,7 @@ export class OpenAIPricingScraper extends BaseCollector {
         "openai",
         PROMPT,
         10000,
-        90000
+        120000
       );
 
       const models: RawModel[] = extracted.map(m => ({

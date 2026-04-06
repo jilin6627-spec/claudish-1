@@ -32,7 +32,7 @@ export const ENV = {
   OPENAI_BASE_URL: "OPENAI_BASE_URL", // Custom OpenAI API endpoint (default: https://api.openai.com)
   // Local model optimizations
   CLAUDISH_SUMMARIZE_TOOLS: "CLAUDISH_SUMMARIZE_TOOLS", // Summarize tool descriptions to reduce prompt size
-  CLAUDISH_DIAG_MODE: "CLAUDISH_DIAG_MODE", // Diagnostic output mode: pty (default), tmux, logfile, off
+  CLAUDISH_DIAG_MODE: "CLAUDISH_DIAG_MODE", // Diagnostic output mode: auto (default), logfile, off
 } as const;
 
 // OpenRouter API Configuration

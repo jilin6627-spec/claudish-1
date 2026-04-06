@@ -444,6 +444,7 @@ export function getFallbackChain(modelName: string, nativeProvider: string): Fal
   if (
     nativeProvider !== "unknown" &&
     nativeProvider !== "qwen" &&
+    nativeProvider !== "deepseek" &&
     nativeProvider !== "native-anthropic"
   ) {
     if (hasProviderCredentials(nativeProvider)) {

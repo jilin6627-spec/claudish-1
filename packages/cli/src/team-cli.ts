@@ -56,7 +56,7 @@ Options (run / run-and-judge):
   --models <a,b,...>  Comma-separated model IDs to run
   --input <text>      Task prompt (or create input.md in --path beforehand)
   --timeout <secs>    Timeout per model in seconds (default: 300)
-  --grid              Show all models in an mtm grid with live output + status bar
+  --grid              Show all models in a magmux grid with live output + status bar
 
 Options (judge / run-and-judge):
   --judges <a,b,...>  Comma-separated judge model IDs (default: same as runners)
@@ -76,12 +76,15 @@ Examples:
 // ─── Entry Point ─────────────────────────────────────────────────────────────
 
 export async function teamCommand(args: string[]): Promise<void> {
-  const subcommand = args[0];
-
-  if (!subcommand || hasFlag(args, "--help") || hasFlag(args, "-h")) {
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
     printHelp();
     process.exit(0);
   }
+
+  // Detect legacy subcommand (run, judge, etc.) or new streamlined syntax
+  const firstArg = args[0] ?? "";
+  const legacySubs = ["run", "judge", "run-and-judge", "status"];
+  const subcommand = legacySubs.includes(firstArg) ? firstArg : "run";
 
   const rawSessionPath = getFlag(args, "--path") ?? ".";
   let sessionPath: string;
@@ -93,9 +96,23 @@ export async function teamCommand(args: string[]): Promise<void> {
   }
   const modelsRaw = getFlag(args, "--models");
   const judgesRaw = getFlag(args, "--judges");
-  const input = getFlag(args, "--input");
+  const mode = (getFlag(args, "--mode") ?? "default") as "default" | "interactive" | "json";
   const timeoutStr = getFlag(args, "--timeout");
   const timeout = timeoutStr ? parseInt(timeoutStr, 10) : 300;
+
+  // Collect input: --input flag or bare positional args
+  let input = getFlag(args, "--input");
+  if (!input) {
+    const flagsWithValues = ["--models", "--judges", "--mode", "--path", "--timeout", "--input"];
+    const positionals = args.filter((a, i) => {
+      if (legacySubs.includes(a) && i === 0) return false;
+      if (a.startsWith("--")) return false;
+      const prev = args[i - 1];
+      if (prev && flagsWithValues.includes(prev)) return false;
+      return true;
+    });
+    if (positionals.length > 0) input = positionals.join(" ");
+  }
 
   const models = modelsRaw
     ? modelsRaw
@@ -110,17 +127,19 @@ export async function teamCommand(args: string[]): Promise<void> {
         .filter(Boolean)
     : undefined;
 
+  // Legacy --grid/--interactive flags map to modes
+  const effectiveMode = hasFlag(args, "--interactive") ? "interactive"
+    : hasFlag(args, "--grid") ? "default"
+    : mode;
+
   switch (subcommand) {
     case "run": {
       if (models.length === 0) {
-        console.error("Error: --models is required for 'run'");
+        console.error("Error: --models is required");
+        printHelp();
         process.exit(1);
       }
-      if (hasFlag(args, "--grid")) {
-        const { runWithGrid } = await import("./team-grid.js");
-        const gridStatus = await runWithGrid(sessionPath, models, input ?? "", { timeout });
-        printStatus(gridStatus);
-      } else {
+      if (effectiveMode === "json") {
         setupSession(sessionPath, models, input);
         const runStatus = await runModels(sessionPath, {
           timeout,
@@ -129,19 +148,24 @@ export async function teamCommand(args: string[]): Promise<void> {
           },
         });
         printStatus(runStatus);
+      } else {
+        const { runWithGrid } = await import("./team-grid.js");
+        const interactive = effectiveMode === "interactive";
+        const gridStatus = await runWithGrid(sessionPath, models, input ?? "", { timeout, interactive });
+        printStatus(gridStatus);
       }
       break;
     }
 
     case "judge": {
-      const verdict = await judgeResponses(sessionPath, { judges });
+      await judgeResponses(sessionPath, { judges });
       console.log(readFileSync(join(sessionPath, "verdict.md"), "utf-8"));
       break;
     }
 
     case "run-and-judge": {
       if (models.length === 0) {
-        console.error("Error: --models is required for 'run-and-judge'");
+        console.error("Error: --models is required");
         process.exit(1);
       }
       setupSession(sessionPath, models, input);
@@ -158,15 +182,9 @@ export async function teamCommand(args: string[]): Promise<void> {
     }
 
     case "status": {
-      const status = getStatus(sessionPath);
-      printStatus(status);
+      const statusResult = getStatus(sessionPath);
+      printStatus(statusResult);
       break;
-    }
-
-    default: {
-      console.error(`Unknown team subcommand: ${subcommand}`);
-      printHelp();
-      process.exit(1);
     }
   }
 }

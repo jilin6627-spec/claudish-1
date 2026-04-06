@@ -138,7 +138,7 @@ describe("Group 1: MCP Protocol — channel capability", () => {
       const res = await client.callTool({
         name: "create_session",
         arguments: {
-          model: "x-ai/grok-code-fast-1",
+          model: "minimax-m2.5",
           prompt: "Say exactly: hello world",
           timeout_seconds: 30,
         },

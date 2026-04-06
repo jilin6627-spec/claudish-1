@@ -18,8 +18,8 @@ export class GooglePricingScraper extends BaseCollector {
         SOURCE_URL,
         "google gemini",
         PROMPT,
-        5000,
-        60000
+        8000,
+        120000
       );
 
       const models: RawModel[] = extracted.map(m => ({
