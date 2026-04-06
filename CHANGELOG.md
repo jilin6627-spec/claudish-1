@@ -2,6 +2,18 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.6.1] - 2026-04-06
+
+### Bug Fixes
+
+- v6.6.1 — OpenAI schema compatibility for bare object MCP tools([`8fe7373`](https://github.com/MadAppGang/claudish/commit/8fe73736d7f3a5d07ede283e407e7a5889f9a1ca))
+- ensure properties:{} on bare object schemas for OpenAI compatibility([`99d3e73`](https://github.com/MadAppGang/claudish/commit/99d3e732f82e776a4d3d809666f95233c206fb55))
+- quota bar without pill bg — add lowercase color codes to magmux([`d029001`](https://github.com/MadAppGang/claudish/commit/d0290013c04248ee593b88388fa257827b694f5e))
+
+### Documentation
+
+- update CHANGELOG.md for v6.6.0([`2bf5e9a`](https://github.com/MadAppGang/claudish/commit/2bf5e9a6b962e4b1bc15afc46702a62f10f4c9c0))
+
 ## [6.6.0] - 2026-04-01
 
 ### Bug Fixes
