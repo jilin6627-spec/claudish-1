@@ -38,7 +38,7 @@ import {
 import { getVertexConfig, validateVertexOAuthConfig } from "./auth/vertex-auth.js";
 import { resolveModelProvider } from "./providers/provider-resolver.js";
 import { warmPricingCache } from "./services/pricing-cache.js";
-import { fetchLiteLLMModels, warmRecommendedModels } from "./model-loader.js";
+import { fetchLiteLLMModels } from "./model-loader.js";
 import {
   resolveModelNameSync,
   logResolution,
@@ -524,9 +524,6 @@ export async function createProxyServer(
 
   // Warm pricing cache in background (non-blocking)
   warmPricingCache().catch(() => {});
-
-  // Warm recommended models from Firebase in background (non-blocking)
-  warmRecommendedModels().catch(() => {});
 
   // Warm model catalog resolvers in background (non-blocking)
   // OpenRouter always warms; LiteLLM only if configured.
