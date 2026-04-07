@@ -2,6 +2,20 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.11.0] - 2026-04-07
+
+### Bug Fixes
+
+- remove uncommitted warmRecommendedModels import that breaks CI([`b4265ff`](https://github.com/MadAppGang/claudish/commit/b4265ff66e0c52eac57c513eee15a0f65e39dd3a))
+
+### Documentation
+
+- update CHANGELOG.md for v6.10.1([`8233ae5`](https://github.com/MadAppGang/claudish/commit/8233ae5cfc20c2e802b1239856c2337ec9d65c57))
+
+### New Features
+
+- v6.11.0 — Anthropic error format, SSE pings, web search detection([`a249eb4`](https://github.com/MadAppGang/claudish/commit/a249eb4a2e86ec2b3a023a2183d7a3a7b76fb0a7))
+
 ## [6.10.1] - 2026-04-07
 
 ### Documentation
