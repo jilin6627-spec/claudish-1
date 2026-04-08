@@ -2,6 +2,16 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [6.11.1] - 2026-04-08
+
+### Bug Fixes
+
+- v6.11.1 — fix OAuth login in bundled dist, model catalog improvements([`73cff9c`](https://github.com/MadAppGang/claudish/commit/73cff9caa24818935fce2304c77756c7f13639b9))
+
+### Documentation
+
+- update CHANGELOG.md for v6.11.0([`f6a4ce0`](https://github.com/MadAppGang/claudish/commit/f6a4ce09af964a2df6f1dee5f83fc0ddd26f7a04))
+
 ## [6.11.0] - 2026-04-07
 
 ### Bug Fixes
