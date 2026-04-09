@@ -78,6 +78,8 @@ const isLoginCommand = firstPositional === "login";
 const isLogoutCommand = firstPositional === "logout";
 // Quota subcommand: claudish quota [provider]
 const isQuotaCommand = firstPositional === "quota" || firstPositional === "usage";
+// Pure proxy mode: start proxy server only, no Claude Code
+const isProxyOnlyCommand = firstPositional === "proxy" || firstPositional === "proxy-server";
 // Legacy auth flags (deprecated, redirect to new subcommands)
 const isLegacyGeminiLogin = args.includes("--gemini-login");
 const isLegacyGeminiLogout = args.includes("--gemini-logout");
@@ -87,6 +89,9 @@ const isLegacyKimiLogout = args.includes("--kimi-logout");
 if (isMcpMode) {
   // MCP server mode - dynamic import to keep CLI fast
   import("./mcp-server.js").then((mcp) => mcp.startMcpServer());
+} else if (isProxyOnlyCommand) {
+  // Pure proxy server mode - start proxy only, no Claude Code
+  runPureProxy();
 } else if (isLoginCommand) {
   // Auth login subcommand: claudish login [provider]
   const loginProviderArg = args.find((a, i) => i > args.indexOf("login") && !a.startsWith("-"));
@@ -505,4 +510,87 @@ async function runCli() {
     console.error("[claudish] Stack:", error instanceof Error ? error.stack : "no stack");
     process.exit(1);
   }
+}
+
+/**
+ * Pure proxy mode - start proxy server only, never run Claude Code
+ * This is for users who want to use Claude Code on another machine
+ * or just need the API translation proxy without Claude Code
+ */
+async function runPureProxy() {
+  const { parseArgs } = await import("./cli.js");
+  const { DEFAULT_PORT_RANGE } = await import("./config.js");
+  const { findAvailablePort } = await import("./port-manager.js");
+  const { createProxyServer } = await import("./proxy-server.js");
+  const { initLogger } = await import("./logger.js");
+  const { resolveModelProvider, validateApiKeysForModels, getMissingKeyResolutions, getMissingKeysError } = await import(
+    "./providers/provider-resolver.js"
+  );
+  const { promptForApiKey } = await import("./model-selector.js");
+
+  // Parse CLI arguments
+  const cliConfig = await parseArgs(process.argv.slice(2));
+
+  // Initialize logger
+  initLogger(cliConfig.debug, cliConfig.logLevel, cliConfig.noLogs);
+
+  // Find available port
+  const port = cliConfig.port || (await findAvailablePort(DEFAULT_PORT_RANGE.start, DEFAULT_PORT_RANGE.end));
+
+  // Get explicit model from CLI or env var
+  let explicitModel: string | undefined = cliConfig.model;
+  if (!explicitModel && typeof process.env.CLAUDISH_MODEL === "string") {
+    explicitModel = process.env.CLAUDISH_MODEL;
+  }
+
+  // Validate API keys
+  if (explicitModel) {
+    const resolutions = validateApiKeysForModels([explicitModel]);
+    const missingKeys = getMissingKeyResolutions(resolutions);
+    if (missingKeys.length > 0) {
+      console.error(getMissingKeysError(missingKeys));
+      process.exit(1);
+    }
+  }
+
+  // Model map for role overrides
+  const modelMap = {
+    opus: cliConfig.modelOpus,
+    sonnet: cliConfig.modelSonnet,
+    haiku: cliConfig.modelHaiku,
+    subagent: cliConfig.modelSubagent,
+  };
+
+  // Create and start proxy
+  console.log(`[claudish] Starting pure proxy server on port ${port}`);
+  console.log(`[claudish] Press Ctrl+C to stop`);
+
+  const proxy = await createProxyServer(
+    port,
+    cliConfig.openrouterApiKey,
+    explicitModel,
+    false, // not monitor mode
+    cliConfig.anthropicApiKey,
+    modelMap,
+    {
+      summarizeTools: cliConfig.summarizeTools,
+      quiet: cliConfig.quiet,
+      isInteractive: true,
+    }
+  );
+
+  // Keep process running
+  proxy.server.on("listening", () => {
+    const address = proxy.server.address();
+    if (address && typeof address === "object") {
+      console.log(`[claudish] Proxy ready: http://0.0.0.0:${address.port}`);
+    }
+  });
+
+  // Handle shutdown
+  process.on("SIGINT", async () => {
+    console.log("\n[claudish] Shutting down...");
+    await proxy.shutdown();
+    process.exit(0);
+  });
 }
