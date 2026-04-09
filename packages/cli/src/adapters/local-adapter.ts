@@ -119,13 +119,21 @@ export class LocalModelAdapter extends BaseAPIFormat {
     };
 
     // Tool choice mapping from Claude format
+    // For local vLLM/Qwen deployments that don't support --enable-auto-tool-choice
+    // we remove tool_choice="auto" entirely to bypass the server check
     if (claudeRequest.tool_choice && tools.length > 0) {
       const { type, name } = claudeRequest.tool_choice;
       if (type === "tool" && name) {
         payload.tool_choice = { type: "function", function: { name } };
-      } else if (type === "auto" || type === "none") {
+      } else if (type === "none") {
+        payload.tool_choice = type;
+      } else if (type !== "auto") {
+        // For auto: omit entirely instead of passing to avoid vLLM error
         payload.tool_choice = type;
       }
+      // If type is "auto" and local model doesn't support --enable-auto-tool-choice
+      // we just don't include tool_choice in the payload
+      // This bypasses the error and most local models will still do tool calling correctly
     }
 
     return payload;
